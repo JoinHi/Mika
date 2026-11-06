@@ -859,10 +859,17 @@ class AgentLoop(
         val durationMs = now() - started
         val isError = exec.content["ok"] != JsonPrimitive(true)
         history += Message(Role.Tool, listOf(Part.ToolResult(first.id, exec.content.toString(), isError, exec.observations.map { it.tag })) + skipped, Author.Mika)
-        // 批做完(或停下)后再给模型一份当前元素表；只有元素信息不足才附画面。
+        // 批结果里已带最终屏幕时只补它对应的画面;没带屏幕(如最后一步又按条件等过界面)时再看一眼当前元素表。
         if (steps != null && ranAnyStep(exec.content)) {
-            tools.lookNow()?.let { v ->
-                history += Message(Role.User, listOfNotNull(Part.Text(batchViewNote(v.content.toString())), v.image?.let { tools.modelImage(it, v.imageId) }), Author.Mika)
+            if ("screen" in exec.content) {
+                if (exec.images.isNotEmpty()) {
+                    history += Message(Role.User, listOf(Part.Text(NoticePolicy.imageNote(Verb.Tap, offScreen = false))) +
+                        exec.images.mapIndexed { i, img -> tools.modelImage(img, exec.imageIds.getOrNull(i)) }, Author.Mika)
+                }
+            } else {
+                tools.lookNow()?.let { v ->
+                    history += Message(Role.User, listOfNotNull(Part.Text(batchViewNote(v.content.toString())), v.image?.let { tools.modelImage(it, v.imageId) }), Author.Mika)
+                }
             }
         }
         recordReply(BatchRunner.redactArgs(first.argsJson))

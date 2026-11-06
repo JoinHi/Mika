@@ -68,6 +68,18 @@ class HistoryPrunerTest {
         assertTrue(old, "\"tree\":\"${HistoryPruner.OMITTED}\"" in old)
         assertTrue(old, "\"screenMap\":\"${HistoryPruner.OMITTED}\"" in old)
         assertTrue("old tree/read-aid payload survived pruning", long !in old)
+
+        // 批做完后另附的 batch_view_note 屏幕消息跨越裁剪线后同样会缩掉大字段,且可见时计入 visibleReads
+        val prefix = com.wangzan101.mika.core.prompt.Feedback.format("batch_view_note", "screen" to "")
+        val batchRound = listOf(
+            Message(Role.Assistant, listOf(Part.ToolCall("b1", "do_steps", "{}")), Author.Mika),
+            Message(Role.Tool, listOf(Part.ToolResult("b1", """{"ok":true,"completed":1,"total":1,"steps":[{"tool":"phone_tap","ok":true}]}""", false)), Author.Mika),
+            Message(Role.User, listOf(Part.Text(prefix + """{"snapshotId":"batch_snap","elements":$big,"tree":[{"id":1,"nodes":[{"role":"TextView","text":"$long"}]}]}""")), Author.Mika),
+        )
+        assertTrue("batch_snap" in visibleReads(batchRound))
+        val prunedBatch = HistoryPruner.prune(listOf(task) + batchRound + obs("c2") + (1..6).flatMap { tap("t$it") }, TOOLS, cut)
+        val batchText = prunedBatch.flatMap { it.parts }.filterIsInstance<Part.Text>().single { it.text.startsWith(prefix) }.text
+        assertTrue(batchText, "\"snapshotId\":\"batch_snap\"" in batchText && long !in batchText && HistoryPruner.OMITTED in batchText)
     }
 
     @Test fun smallResultsAndHeadUntouched() {

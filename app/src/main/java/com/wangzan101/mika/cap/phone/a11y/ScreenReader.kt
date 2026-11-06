@@ -7,6 +7,7 @@ import com.wangzan101.mika.core.cap.phone.WheelMath
 import com.wangzan101.mika.core.uistate.ElementLocator
 import com.wangzan101.mika.core.uistate.UiElement
 import com.wangzan101.mika.core.uistate.UiStates
+import com.wangzan101.mika.core.uistate.UiTree
 import com.wangzan101.mika.core.uistate.UiTreeNode
 import com.wangzan101.mika.core.uistate.UiWindowTree
 import com.wangzan101.mika.core.uistate.normalize
@@ -43,7 +44,17 @@ internal object ScreenReader {
 
     /** 从上到下排好的、属于界面内容的窗口。 */
     fun contentWindows(windows: List<AccessibilityWindowInfo>): List<AccessibilityWindowInfo> =
-        windows.filter { it.type !in SKIPPED_TYPES }.sortedByDescending { it.layer }
+        windows.filter { it.type !in SKIPPED_TYPES && !isSystemBarWindow(it) }.sortedByDescending { it.layer }
+
+    private fun isSystemBarWindow(w: AccessibilityWindowInfo): Boolean {
+        if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM || w.isFocused) return false
+        return UiTree.isSystemBarWindow(
+            isSystemType = true,
+            packageName = w.root?.packageName?.toString(),
+            title = w.title?.toString(),
+            focused = false,
+        )
+    }
 
     // 最上面的应用窗口可能是读不到内容的浮层(弹出菜单、输入框的选字浮窗等),跳过它们
     fun topPackage(windows: List<AccessibilityWindowInfo>): String? =
@@ -63,9 +74,11 @@ internal object ScreenReader {
         fun visit(n: AccessibilityNodeInfo, depth: Int, inList: Boolean): List<UiTreeNode> {
             if (depth > MAX_DEPTH) return emptyList()
             val visible = n.isVisibleToUser
+            val rid = n.viewIdResourceName
+            val systemDecor = UiTree.isSystemDecorId(rid)
             var ref: String? = null
             var clippedBounds = listOf(0, 0, 0, 0)
-            if (visible) {
+            if (visible && !systemDecor) {
                 n.getBoundsInScreen(rect)
                 hash = mix(hash, n.className, n.text, n.contentDescription, rect.flattenToString(),
                     states(n))
@@ -83,14 +96,10 @@ internal object ScreenReader {
                     if (seen.add("$role|$label|${rect.flattenToString()}")) {
                         val id = "@e${entries.size + 1}"
                         ref = id
-                        val rid = n.viewIdResourceName
                         val element = UiElement(
                             ref = id, role = role, name = label,
                             centerX = rect.centerX(), centerY = rect.centerY(),
-                            bounds = listOf(
-                                normalize(rect.left, width), normalize(rect.top, height),
-                                normalize(rect.right, width), normalize(rect.bottom, height),
-                            ),
+                            bounds = clippedBounds,
                             // 输入框总带上资源 ID:回车前要靠它认出搜索框(名字常常只是推荐词)
                             resourceId = if (label.isEmpty() || n.isEditable) readableResourceId(rid) else null,
                             clickable = n.isClickable, editable = n.isEditable, scrollable = n.isScrollable,
@@ -108,23 +117,28 @@ internal object ScreenReader {
                     }
                 }
             }
-            val childrenInList = inList || isList(n)
+            val nodeIsList = isList(n)
+            val childrenInList = inList || nodeIsList
             val children = buildList {
                 for (i in 0 until n.childCount) n.getChild(i)?.let { addAll(visit(it, depth + 1, childrenInList)) }
             }
-            if (!visible) return children
-            return listOf(UiTreeNode(
-                role = roleOf(n), bounds = clippedBounds, ref = ref,
-                text = n.text?.toString()?.takeUnless { n.isPassword || it.isBlank() },
-                description = n.contentDescription?.toString()?.takeUnless { n.isPassword || it.isBlank() },
-                hintText = n.hintText?.toString()?.takeUnless { it.isBlank() },
-                resourceId = n.viewIdResourceName,
-                clickable = n.isClickable, editable = n.isEditable, scrollable = n.isScrollable,
-                checkable = n.isCheckable, checked = n.isChecked, selected = n.isSelected,
-                enabled = n.isEnabled, focused = n.isFocused, secret = n.isPassword,
-                wheel = isWheel(n),
-                children = children,
-            ))
+            if (!visible || systemDecor) return children
+            // 查询、盲区与遮挡判断需要完整树;仅在输出给模型时精简。
+            return listOf(
+                UiTreeNode(
+                    role = roleOf(n), bounds = clippedBounds, ref = ref,
+                    text = n.text?.toString()?.takeUnless { n.isPassword || it.isBlank() },
+                    description = n.contentDescription?.toString()?.takeUnless { n.isPassword || it.isBlank() },
+                    hintText = n.hintText?.toString()?.takeUnless { it.isBlank() },
+                    resourceId = rid,
+                    clickable = n.isClickable, editable = n.isEditable, scrollable = n.isScrollable,
+                    checkable = n.isCheckable, checked = n.isChecked, selected = n.isSelected,
+                    enabled = n.isEnabled, focused = n.isFocused, secret = n.isPassword,
+                    wheel = isWheel(n),
+                    children = children,
+                    listContainer = nodeIsList,
+                ),
+            )
         }
 
         val trees = content.map { w ->
@@ -217,7 +231,7 @@ internal object ScreenReader {
         val rect = Rect()
         fun visit(n: AccessibilityNodeInfo, depth: Int) {
             if (depth > MAX_DEPTH) return
-            if (n.isVisibleToUser) {
+            if (n.isVisibleToUser && !UiTree.isSystemDecorId(n.viewIdResourceName)) {
                 n.getBoundsInScreen(rect)
                 hash = mix(hash, n.className, n.text, n.contentDescription, rect.flattenToString(),
                     states(n))
@@ -299,10 +313,7 @@ internal object ScreenReader {
     }
 
     /** `com.x:id/cart_icon` → `cart_icon`;混淆过的短名认不出用途,不给。 */
-    private fun readableResourceId(id: String?): String? {
-        val short = id?.substringAfterLast('/') ?: return null
-        return short.takeIf { Regex("^[A-Za-z0-9_]{4,}$").matches(it) && Regex("[A-Za-z]{3}").containsMatchIn(it) }
-    }
+    private fun readableResourceId(id: String?): String? = UiTree.readableResourceId(id)
 
     private const val FNV_OFFSET = -0x340d631b7bdddcdbL
     private const val FNV_PRIME = 0x100000001b3L

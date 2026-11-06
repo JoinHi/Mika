@@ -7,10 +7,10 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** 给模型看的手机窗口层级;节点完整保留,只省去空字段和默认状态。 */
+/** 给模型看的手机窗口层级;展示时精简,内部快照仍保留完整节点与资源 ID。 */
 object UiTreeJson {
     fun windows(s: ScreenSnapshot): JsonArray = buildJsonArray {
-        for (w in s.windows) add(buildJsonObject {
+        for (w in UiTree.compactWindows(s.windows)) add(buildJsonObject {
             put("id", w.id)
             put("type", w.type)
             put("layer", w.layer)
@@ -29,8 +29,9 @@ object UiTreeJson {
         put("role", n.role)
         n.ref?.let { put("ref", it) }
         n.text?.let { put("text", it) }
-        n.description?.let { put("description", it) }
-        n.hintText?.let { put("hintText", it) }
+        val desc = n.description?.takeUnless { it == n.text }
+        desc?.let { put("description", it) }
+        n.hintText?.takeUnless { it == n.text || it == desc }?.let { put("hintText", it) }
         n.resourceId?.let { put("resourceId", it) }
         put("bounds", JsonArray(n.bounds.map(::JsonPrimitive)))
         if (n.clickable) put("clickable", true)
@@ -46,8 +47,8 @@ object UiTreeJson {
 
     /** 路径按窗口和子节点序号定位;同一路径的属性变化只发该节点,新增节点发完整子树。 */
     fun changes(before: ScreenSnapshot, current: ScreenSnapshot): JsonObject {
-        val old = index(before.windows)
-        val now = index(current.windows)
+        val old = index(UiTree.compactWindows(before.windows))
+        val now = index(UiTree.compactWindows(current.windows))
         val updated = buildJsonArray {
             for ((path, n) in now) {
                 val previous = old[path]

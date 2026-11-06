@@ -77,5 +77,10 @@ class AgentLoopFrameTest {
         assertEquals(2, m.requests.size)
         assertEquals(listOf("back", "back"), screen.calls)
         assertTrue("images in requests: ${m.requests.map { images(it).map(Part.Image::screenshotId) }}", m.requests.all { images(it).isEmpty() })
+        val secondRound = m.requests[1].withoutRuntime()
+        val toolResult = secondRound.flatMap { it.parts }.filterIsInstance<Part.ToolResult>().single { it.callId == batch.id }
+        assertTrue("\"screen\"" in toolResult.content)
+        // 批结果已自带最新 screen,不再在同轮追加第二份重复的 batch_view_note 屏幕
+        assertTrue(secondRound.none { msg -> msg.parts.any { it is Part.Text && "The screen after the steps above." in it.text } })
     }
 }

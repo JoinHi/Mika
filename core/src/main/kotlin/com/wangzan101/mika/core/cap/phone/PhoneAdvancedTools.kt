@@ -13,6 +13,7 @@ import com.wangzan101.mika.core.tool.ToolExecution
 import com.wangzan101.mika.core.tool.Verb
 import com.wangzan101.mika.core.tool.int
 import com.wangzan101.mika.core.tool.str
+import com.wangzan101.mika.core.uistate.UiTree
 import com.wangzan101.mika.core.uistate.UiTreeNode
 import com.wangzan101.mika.core.uistate.toPx
 import kotlinx.serialization.json.JsonArray
@@ -185,8 +186,12 @@ internal object PhoneExtract : PhoneTool {
                     if (!node.secret) node.text?.let { put("value", it.take(2_000)) }
                     put("parents", JsonArray(parents.map(::JsonPrimitive)))
                 }
-                "list" -> if (node.scrollable || node.role.contains("RecyclerView", true) || node.role.contains("ListView", true)) {
-                    node.children.forEach { row ->
+                "list" -> if (node.scrollable || node.listContainer || node.role.contains("RecyclerView", true) || node.role.contains("ListView", true)) {
+                    var rows = node.children
+                    while (rows.size == 1 && rows.single().children.size > 1 && rows.single().children.all { it.children.isNotEmpty() }) {
+                        rows = rows.single().children
+                    }
+                    rows.forEach { row ->
                         if (records.size < max) {
                             val values = text(row).distinct().filter(String::isNotBlank)
                             if (values.isNotEmpty()) records += buildJsonObject {
@@ -202,7 +207,7 @@ internal object PhoneExtract : PhoneTool {
             val next = (parents + listOfNotNull(node.text, node.description).firstOrNull { it.isNotBlank() }.orEmpty()).filter(String::isNotBlank).takeLast(6)
             node.children.forEach { walk(it, next) }
         }
-        screen.windows.forEach { window -> window.nodes.forEach { walk(it, listOfNotNull(window.title)) } }
+        UiTree.compactWindows(screen.windows).forEach { window -> window.nodes.forEach { walk(it, listOfNotNull(window.title)) } }
         ToolExecution(buildJsonObject {
             put("ok", true); put("mode", mode); put("snapshotId", screen.snapshotId)
             put("currentApp", screen.packageName ?: screen.unreadableApp)

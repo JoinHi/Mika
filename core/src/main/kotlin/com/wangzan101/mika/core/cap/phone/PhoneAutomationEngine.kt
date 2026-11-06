@@ -20,7 +20,7 @@ internal object PhoneAutomationEngine {
             val editRef = if (node.editable) node.ref ?: editableParent else editableParent
             val label = listOfNotNull(node.text.takeUnless { node.secret }, node.description, node.hintText).filter(String::isNotBlank).joinToString(" ")
             val hit = (query.text == null || label.contains(query.text, ignoreCase = true)) &&
-                (query.resourceId == null || node.resourceId?.contains(query.resourceId, ignoreCase = true) == true) &&
+                matchesResourceId(node.resourceId, query.resourceId) &&
                 (query.role == null || node.role.contains(query.role, ignoreCase = true))
             if (hit) {
                 total++
@@ -47,7 +47,7 @@ internal object PhoneAutomationEngine {
         if (screen.windows.isEmpty()) {
             screen.elements.forEach { e ->
                 if ((query.text == null || (!e.secret && e.name.contains(query.text, true))) &&
-                    (query.resourceId == null || e.resourceId?.contains(query.resourceId, true) == true) &&
+                    matchesResourceId(e.resourceId, query.resourceId) &&
                     (query.role == null || e.role.contains(query.role, true))) {
                     total++
                     if (matches.size < limit) matches += buildJsonObject {
@@ -84,5 +84,15 @@ internal object PhoneAutomationEngine {
         if (page.isEmpty()) return accumulated
         val overlap = (minOf(accumulated.size, page.size) downTo 1).firstOrNull { n -> page.takeLast(n) == accumulated.take(n) } ?: 0
         return page.dropLast(overlap) + accumulated
+    }
+
+    /** 原始 ID 按完整/部分值查询;只在端口提供短名时兼容带前缀的查询。 */
+    private fun matchesResourceId(actual: String?, expected: String?): Boolean {
+        if (expected == null) return true
+        if (actual == null) return false
+        if (actual.contains(expected, ignoreCase = true)) return true
+        if ('/' in actual) return false
+        val shortExpected = expected.substringAfterLast('/')
+        return shortExpected.isNotEmpty() && actual.substringAfterLast('/').contains(shortExpected, ignoreCase = true)
     }
 }

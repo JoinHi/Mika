@@ -151,6 +151,10 @@ class BatchRunner(
             val until = s.until?.takeIf { hard == null && (!review || it.appears != null) }
             val waited = until?.let { tools.waitUntil(it, executor.recorder::now, steerWaiting) }
             waited?.let { waitedMs += it.waitedMs }
+            // 这一步在动作后又等了界面变化:动作刚做完时顺带读的那一屏已过时,不作为整批结束时的屏幕带回
+            if (waited != null && waited.waitedMs > 0 && "screen" in exec.content) {
+                last = exec.with(content = JsonObject(exec.content - "screen"), images = emptyList(), imageIds = emptyList())
+            }
             val reason = hard ?: when {
                 waited != null && !waited.met -> when (waited.stopped) {
                     UntilOutcome.TIMEOUT -> "expectation_unmet"

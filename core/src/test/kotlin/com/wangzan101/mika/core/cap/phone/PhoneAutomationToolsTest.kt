@@ -13,6 +13,8 @@ import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import com.wangzan101.mika.core.uistate.ScreenEvent
 import com.wangzan101.mika.core.uistate.SystemCommandResult
 import com.wangzan101.mika.core.uistate.ActionResult
+import com.wangzan101.mika.core.uistate.UiTree
+import com.wangzan101.mika.core.uistate.UiTreeJson
 import com.wangzan101.mika.core.uistate.UiTreeNode
 import com.wangzan101.mika.core.uistate.UiWindowTree
 import kotlinx.coroutines.test.runTest
@@ -266,5 +268,99 @@ class PhoneAutomationToolsTest {
         assertEquals("notification:com.example.app:9000:5", requested)
         assertEquals("2", result["count"]!!.jsonPrimitive.content)
         assertTrue(result.toString().contains("第二条"))
+    }
+
+    @Test fun queryAndExtractWorkSeamlesslyWithCompactedTreeAndShortResourceIds() = runTest {
+        val rawTree = listOf(
+            UiTreeNode("FrameLayout", listOf(0, 0, 999, 999), children = listOf(
+                UiTreeNode("RecyclerView", listOf(0, 100, 999, 900), resourceId = "com.example.app:id/messages_list", scrollable = true, children = listOf(
+                    UiTreeNode("FrameLayout", listOf(0, 100, 999, 900), children = listOf(
+                        UiTreeNode("FrameLayout", listOf(0, 100, 999, 260), children = listOf(
+                            UiTreeNode("LinearLayout", listOf(0, 100, 999, 260), children = listOf(
+                                UiTreeNode("TextView", listOf(30, 110, 400, 180), ref = "@e1", text = "张三", resourceId = "com.example.app:id/sender_name"),
+                                UiTreeNode("TextView", listOf(30, 190, 900, 250), ref = "@e2", text = "晚餐 200", resourceId = "com.example.app:id/message_body"),
+                            )),
+                        )),
+                        UiTreeNode("LinearLayout", listOf(0, 270, 999, 420), children = listOf(
+                            UiTreeNode("TextView", listOf(30, 280, 400, 340), ref = "@e3", text = "李四", resourceId = "com.example.app:id/sender_name"),
+                            UiTreeNode("TextView", listOf(30, 350, 900, 410), ref = "@e4", text = "收到", resourceId = "com.example.app:id/message_body"),
+                        )),
+                    )),
+                )),
+                UiTreeNode("EditText", listOf(30, 910, 900, 980), ref = "@e5", text = "草稿", hintText = "草稿",
+                    resourceId = "com.example.app:id/message_input", editable = true),
+            )),
+        )
+        val rawSnap = ScreenSnapshot("p1", "com.example.app", emptyList(), 1080, 2400, windows = listOf(
+            UiWindowTree(1, "application", 0, "会话", "com.example.app", true, true, rawTree),
+        ))
+        val compactedSnap = ScreenSnapshot("p1", "com.example.app", emptyList(), 1080, 2400, windows = listOf(
+            UiWindowTree(1, "application", 0, "会话", "com.example.app", true, true, UiTree.compact(rawTree)),
+        ))
+        // 无论底层存原始树还是已精简树,短 ID 与带包名前缀的完整 ID 都能互配
+        val byShortOnRaw = PhoneAutomationEngine.find(rawSnap, PhoneAutomationEngine.Query(resourceId = "message_body"), 10)
+        assertEquals(2, byShortOnRaw["total"]!!.jsonPrimitive.content.toInt())
+        val byFullOnCompacted = PhoneAutomationEngine.find(compactedSnap, PhoneAutomationEngine.Query(resourceId = "com.example.app:id/message_body"), 10)
+        assertEquals(2, byFullOnCompacted["total"]!!.jsonPrimitive.content.toInt())
+        assertEquals("@e2", byFullOnCompacted["matches"]!!.jsonArray.first().jsonObject["ref"]!!.jsonPrimitive.content)
+
+        // 原始快照经 PhoneExtract 提取时自动折叠单子包装壳并清洗表单 resourceId/重复 hintText
+        val screen = object : ScreenPort by FakeScreen() {
+            override suspend fun snapshot(): ScreenSnapshot = rawSnap
+        }
+        val dispatcher = toolDispatcher(screen)
+        val extracted = PhoneExtract.execute(Args(PhoneExtract.def, Json.parseToJsonElement("""{"mode":"list"}""").jsonObject), dispatcher.ctx).content
+        assertEquals("2", extracted["count"]!!.jsonPrimitive.content)
+        val firstRow = extracted["items"]!!.jsonArray.first().jsonObject["texts"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("张三", "晚餐 200"), firstRow)
+
+        val form = PhoneExtract.execute(Args(PhoneExtract.def, Json.parseToJsonElement("""{"mode":"form"}""").jsonObject), dispatcher.ctx).content
+        val field = form["items"]!!.jsonArray.single().jsonObject
+        assertEquals("message_input", field["resourceId"]!!.jsonPrimitive.content)
+        assertTrue("hint" !in field)
+    }
+
+    @Test fun queryKeepsObfuscatedIdsAndContainerActionRefsAfterDisplayCompaction() = runTest {
+        val button = UiTreeNode("Button", listOf(20, 110, 400, 180), ref = "@e2", text = "打开",
+            resourceId = "com.example.app:id/j5t", clickable = true)
+        val header = UiTreeNode("FrameLayout", listOf(0, 100, 999, 200), resourceId = "com.example.app:id/account_header",
+            children = listOf(button))
+        val row = UiTreeNode("FrameLayout", listOf(0, 100, 999, 200), ref = "@e1", clickable = true, children = listOf(header))
+        val snapshot = ScreenSnapshot("p1", "com.example.app", emptyList(), 1080, 2400, windows = listOf(
+            UiWindowTree(1, "application", 0, null, "com.example.app", true, true, listOf(row))))
+        val port = object : ScreenPort by FakeScreen() {
+            override suspend fun snapshot() = snapshot
+        }
+        val dispatcher = toolDispatcher(port)
+        val displayedRow = UiTreeJson.windows(snapshot).single().jsonObject["nodes"]!!.jsonArray.single().jsonObject
+        val displayedHeader = displayedRow["children"]!!.jsonArray.single().jsonObject
+        assertEquals("account_header", displayedHeader["resourceId"]!!.jsonPrimitive.content)
+        assertFalse(displayedHeader["children"]!!.jsonArray.single().jsonObject.containsKey("resourceId"))
+
+        for (id in listOf("com.example.app:id/j5t", "j5t")) {
+            val found = dispatcher.executeRead(Part.ToolCall("q$id", "phone_query", buildJsonObject { put("resourceId", id) }.toString())).content
+            assertEquals(1, found["total"]!!.jsonPrimitive.content.toInt())
+            assertEquals("com.example.app:id/j5t", found["matches"]!!.jsonArray.single().jsonObject["resourceId"]!!.jsonPrimitive.content)
+            assertTrue(found["matches"]!!.jsonArray.single().jsonObject.containsKey("actionRef"))
+        }
+        val foundHeader = dispatcher.executeRead(Part.ToolCall("h", "phone_query", """{"resourceId":"account_header"}""")).content
+        val match = foundHeader["matches"]!!.jsonArray.single().jsonObject
+        assertEquals(1, foundHeader["total"]!!.jsonPrimitive.content.toInt())
+        val foundRow = dispatcher.executeRead(Part.ToolCall("r", "phone_query", """{"role":"FrameLayout"}""")).content
+        val parentRef = foundRow["matches"]!!.jsonArray.first().jsonObject["ref"]
+        assertEquals(parentRef, match["actionRef"])
+    }
+
+    @Test fun fullResourceIdQueryDoesNotMatchAnotherNamespace() {
+        val nodes = listOf("com.example.app", "com.other.app").mapIndexed { i, pkg ->
+            UiTreeNode("Button", listOf(10, 100 + i * 100, 500, 180 + i * 100), ref = "@e${i + 1}",
+                resourceId = "$pkg:id/search", clickable = true)
+        }
+        val snapshot = ScreenSnapshot("p1", "com.example.app", emptyList(), 1080, 2400, windows = listOf(
+            UiWindowTree(1, "application", 0, null, "com.example.app", true, true, nodes)))
+        val full = PhoneAutomationEngine.find(snapshot, PhoneAutomationEngine.Query(resourceId = "com.example.app:id/search"), 10)
+        assertEquals("@e1", full["matches"]!!.jsonArray.single().jsonObject["ref"]!!.jsonPrimitive.content)
+        val short = PhoneAutomationEngine.find(snapshot, PhoneAutomationEngine.Query(resourceId = "search"), 10)
+        assertEquals(2, short["total"]!!.jsonPrimitive.content.toInt())
     }
 }

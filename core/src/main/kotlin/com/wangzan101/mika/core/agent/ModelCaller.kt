@@ -1,5 +1,7 @@
 package com.wangzan101.mika.core.agent
 
+import com.wangzan101.mika.core.prompt.Feedback
+
 import com.wangzan101.mika.core.trace.RunTrace
 import com.wangzan101.mika.core.action.ConfirmDecision
 import com.wangzan101.mika.core.model.ChatModel
@@ -238,12 +240,17 @@ internal class ModelCaller(
     }
 }
 
-/** 发出的历史里还完整可见的读取(按编号):带元素列表的读取结果与带 screen 对象的动作结果。 */
+/** 发出的历史里还完整可见的读取(按编号):带元素列表的读取结果、带 screen 对象的动作结果与批做完后另附的屏幕。 */
 internal fun visibleReads(messages: List<Message>): Set<String> {
     val out = HashSet<String>()
+    val batchPrefix = Feedback.format("batch_view_note", "screen" to "")
     for (m in messages) for (p in m.parts) {
-        if (p !is Part.ToolResult) continue
-        val obj = try { Json.parseToJsonElement(p.content) as? JsonObject } catch (e: SerializationException) { null } ?: continue
+        val raw = when {
+            p is Part.ToolResult -> p.content
+            p is Part.Text && p.text.startsWith(batchPrefix) -> p.text.removePrefix(batchPrefix)
+            else -> continue
+        }
+        val obj = try { Json.parseToJsonElement(raw) as? JsonObject } catch (e: SerializationException) { null } ?: continue
         val shown = (obj["screen"] as? JsonObject) ?: obj.takeIf { it["elements"] is JsonArray } ?: continue
         (shown["snapshotId"] as? JsonPrimitive)?.contentOrNull?.let(out::add)
     }

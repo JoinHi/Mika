@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,9 +22,12 @@ class ScreenMapTest {
         ),
     )
 
-    @Test fun observationAddsLinkWhileKeepingOriginalTreeAndOcr() = runTest {
-        val tree = listOf(UiTreeNode("Button", listOf(100, 100, 300, 200), ref = "@e1", clickable = true,
-            children = listOf(UiTreeNode("TextView", listOf(140, 125, 260, 170)))))
+    @Test fun observationLinksUseDisplayedPathsWhileKeepingTheRawTree() = runTest {
+        val tree = listOf(UiTreeNode("FrameLayout", listOf(0, 0, 999, 999), children = listOf(
+            UiTreeNode("View", listOf(0, 0, 999, 10)),
+            UiTreeNode("Button", listOf(100, 100, 300, 200), ref = "@e1", clickable = true,
+                children = listOf(UiTreeNode("TextView", listOf(140, 125, 260, 170)))),
+        )))
         val source = screen(tree)
         val port = object : ScreenPort by FakeScreen() {
             override suspend fun snapshot() = source
@@ -36,7 +40,10 @@ class ScreenMapTest {
         assertEquals("@e1", link["ref"]!!.jsonPrimitive.content)
         assertEquals("0", link["ocrIndexes"]!!.jsonArray.single().jsonPrimitive.content)
         assertEquals("搜索", content["visibleText"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content)
-        assertTrue(content["tree"]!!.jsonArray.single().jsonObject["nodes"]!!.jsonArray.single().jsonObject.containsKey("children"))
+        val displayed = content["tree"]!!.jsonArray.single().jsonObject["nodes"]!!.jsonArray.single().jsonObject
+        assertEquals(link["ref"], displayed["ref"])
+        assertFalse(displayed.containsKey("children"))
+        assertEquals(tree, source.windows.single().nodes)
     }
 
     @Test fun overlappingUnrelatedControlsRemainUnlinked() {
@@ -56,7 +63,10 @@ class ScreenMapTest {
         val base = screen(listOf(UiTreeNode("Button", listOf(100, 100, 300, 200), ref = "@e1", clickable = true)))
         val overlay = UiWindowTree(8, "system", 2, null, "android", true, true,
             listOf(UiTreeNode("TextView", listOf(100, 100, 300, 200))))
-        assertNull(ScreenMap.json(base.copy(windows = base.windows + overlay),
+        val source = base.copy(windows = base.windows + overlay)
+        // 上层无字小窗口在展示中可省略,但仍须阻止 OCR 关联到被它遮住的按钮。
+        assertTrue(UiTreeJson.windows(source).last().jsonObject["nodes"]!!.jsonArray.isEmpty())
+        assertNull(ScreenMap.json(source,
             listOf(VisibleTextLine("弹窗文字", listOf(150, 130, 250, 165)))))
     }
 }

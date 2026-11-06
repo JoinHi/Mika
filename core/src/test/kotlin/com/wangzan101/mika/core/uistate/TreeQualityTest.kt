@@ -136,6 +136,27 @@ class TreeQualityTest {
         assertFalse("hint" in r.content)
     }
 
+    @Test fun largeTextlessLayoutStillTriggersOcrWhenOmittedFromDisplay() = runTest {
+        val named = rows(8)
+        val textNodes = named.map { UiTreeNode("TextView", it.bounds, ref = it.ref, text = it.name) }
+        val blind = UiTreeNode("FrameLayout", listOf(0, 600, 999, 999))
+        val source = shot(named, textNodes + blind)
+        var ocrReads = 0
+        val port = object : ScreenPort by FakeScreen() {
+            override suspend fun snapshot() = source
+            override suspend fun readVisibleText(): List<VisibleTextLine> {
+                ocrReads++
+                return listOf(line("隐藏内容甲", 620), line("隐藏内容乙", 700), line("隐藏内容丙", 780))
+            }
+        }
+        val result = toolDispatcher(port).executeRead(Part.ToolCall("o", "phone_observe", "{}"))
+        assertEquals(1, ocrReads)
+        assertEquals("partial", result.content.s("treeQuality"))
+        assertEquals(3, result.content["visibleText"]!!.jsonArray.size)
+        assertEquals(named.size, result.content["tree"]!!.jsonArray.single().jsonObject["nodes"]!!.jsonArray.size)
+        assertEquals(blind, source.windows.single().nodes.last())
+    }
+
     @Test fun seeingModelGetsScreenshotForUnusableTreeAndStillTheText() = runTest {
         val s = OcrScreen(emptyList(), chat)
         val r = toolDispatcher(s, visionEnabled = true, adaptiveVision = true).executeRead(Part.ToolCall("o", "phone_observe", "{}"))

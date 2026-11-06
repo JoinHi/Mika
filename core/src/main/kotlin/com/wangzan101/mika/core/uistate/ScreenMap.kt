@@ -18,20 +18,16 @@ internal object ScreenMap {
 
     fun json(screen: ScreenSnapshot, ocr: List<VisibleTextLine>): JsonObject? {
         if (screen.web != null || screen.windows.isEmpty() || ocr.isEmpty()) return null
-        val nodes = buildList<PositionedNode> {
-            fun visit(path: String, node: UiTreeNode, layer: Int) {
-                if (area(node.bounds) > 0) add(PositionedNode(path, node, layer))
-                node.children.forEachIndexed { i, child -> visit("$path/$i", child, layer) }
-            }
-            screen.windows.forEach { window -> window.nodes.forEachIndexed { i, node -> visit("w${window.id}/$i", node, window.layer) } }
-        }
-        val controls = nodes.filter { !it.node.secret && it.node.enabled && (it.node.clickable || it.node.editable || it.node.checkable) }
+        val occluders = positionedNodes(screen.windows)
+        // 路径指向模型看到的精简树;遮挡仍看原始树,包含被省略的小浮层和布局。
+        val controls = positionedNodes(UiTree.compactWindows(screen.windows))
+            .filter { !it.node.secret && it.node.enabled && (it.node.clickable || it.node.editable || it.node.checkable) }
         if (controls.isEmpty()) return null
 
         val linked = linkedMapOf<String, Pair<PositionedNode, MutableList<Int>>>()
         ocr.forEachIndexed { index, line ->
             // 上层窗口遮住的下层控件，即使坐标重合也不是这行可见文字的主人。
-            val topLayer = nodes.asSequence().filter { containsMost(it.node.bounds, line.bounds) }.maxOfOrNull { it.layer }
+            val topLayer = occluders.asSequence().filter { containsMost(it.node.bounds, line.bounds) }.maxOfOrNull { it.layer }
                 ?: return@forEachIndexed
             val candidates = controls.filter { it.layer == topLayer && containsMost(it.node.bounds, line.bounds) }
                 .sortedWith(compareBy<PositionedNode> { it.area }.thenByDescending { it.path.count { c -> c == '/' } })
@@ -54,6 +50,14 @@ internal object ScreenMap {
                 }
             })
         }
+    }
+
+    private fun positionedNodes(windows: List<UiWindowTree>): List<PositionedNode> = buildList {
+        fun visit(path: String, node: UiTreeNode, layer: Int) {
+            if (area(node.bounds) > 0) add(PositionedNode(path, node, layer))
+            node.children.forEachIndexed { i, child -> visit("$path/$i", child, layer) }
+        }
+        windows.forEach { window -> window.nodes.forEachIndexed { i, node -> visit("w${window.id}/$i", node, window.layer) } }
     }
 
     private fun containsMost(box: List<Int>, line: List<Int>): Boolean {

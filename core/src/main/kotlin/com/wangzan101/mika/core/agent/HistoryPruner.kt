@@ -5,6 +5,7 @@ import com.wangzan101.mika.core.model.Message
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.model.Role
 import com.wangzan101.mika.core.observation.ObsForm
+import com.wangzan101.mika.core.prompt.Feedback
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -62,6 +63,7 @@ object HistoryPruner {
     private const val SCREEN = "screen"
     /** 缩短时一定留着的结局字段。 */
     private val OUTCOME = setOf("ok", "error", "message", "recoverable", "exitCode")
+    private val batchViewPrefix: String get() = Feedback.format("batch_view_note", "screen" to "")
 
     /** 裁剪线:最近 [window] 次工具往返原样,之前的缩短。 */
     data class Cut(val window: Int) {
@@ -82,12 +84,19 @@ object HistoryPruner {
         val line = starts[k]
         val names = callVerbs(input, tools)
         val screens = screenResults(input)
+        val prefix = batchViewPrefix
         // 线之前最近的全量界面
         val anchor = (0 until line).lastOrNull { i ->
-            input[i].parts.any { it is Part.ToolResult && (names[it.callId] in FULL_VERBS || screens[it.callId] == true) }
+            input[i].parts.any {
+                (it is Part.ToolResult && (names[it.callId] in FULL_VERBS || screens[it.callId] == true)) ||
+                    (it is Part.Text && it.text.startsWith(prefix) && "\"elements\":[" in it.text)
+            }
         }
         // 用户的话(连同照片)不裁
-        return input.mapIndexed { i, m -> if (i >= line || i == anchor || m.author == Author.User) m else shrinkMessage(m, names, screens) }
+        return input.mapIndexed { i, m ->
+            if (i >= line || m.author == Author.User) m
+            else shrinkMessage(m, names, screens, prefix, keepScreenText = i == anchor)
+        }
     }
 
     /**
@@ -96,12 +105,22 @@ object HistoryPruner {
      */
     fun shrinkOversized(messages: List<Message>, fits: (List<Message>) -> Boolean): List<Message> {
         val out = messages.toMutableList()
+        val prefix = batchViewPrefix
         for (i in out.indices.reversed()) {
             if (fits(out)) break
             val m = out[i]
-            if (m.author == Author.User || m.parts.none { it is Part.ToolResult && TokenEstimate.of(it.content) > BIG_RESULT_TOKENS }) continue
+            val hasBig = m.parts.any {
+                (it is Part.ToolResult && TokenEstimate.of(it.content) > BIG_RESULT_TOKENS) ||
+                    (it is Part.Text && it.text.startsWith(prefix) && TokenEstimate.of(it.text) > BIG_RESULT_TOKENS)
+            }
+            if (m.author == Author.User || !hasBig) continue
             out[i] = m.copy(parts = m.parts.map { p ->
-                if (p is Part.ToolResult && TokenEstimate.of(p.content) > BIG_RESULT_TOKENS) withObsIds(p, shrinkRead(p.content)) else p
+                when {
+                    p is Part.ToolResult && TokenEstimate.of(p.content) > BIG_RESULT_TOKENS -> withObsIds(p, shrinkRead(p.content))
+                    p is Part.Text && p.text.startsWith(prefix) && TokenEstimate.of(p.text) > BIG_RESULT_TOKENS ->
+                        Part.Text(prefix + shrinkInterface(p.text.removePrefix(prefix)))
+                    else -> p
+                }
             })
         }
         return out
@@ -125,11 +144,15 @@ object HistoryPruner {
         }
     }
 
-    private fun shrinkMessage(m: Message, names: Map<String, Verb?>, screens: Map<String, Boolean>): Message {
+    private fun shrinkMessage(
+        m: Message, names: Map<String, Verb?>, screens: Map<String, Boolean>, prefix: String, keepScreenText: Boolean,
+    ): Message {
+        if (keepScreenText && m.parts.none { it is Part.Image }) return m
         val parts = m.parts.map { p ->
             when (p) {
                 is Part.Image -> Part.Text(p.screenshotId?.let(::olderImage) ?: OMITTED_IMAGE)
-                is Part.ToolResult -> shrinkResult(p, names[p.callId], screens)
+                is Part.ToolResult -> if (keepScreenText) p else shrinkResult(p, names[p.callId], screens)
+                is Part.Text -> if (!keepScreenText && p.text.startsWith(prefix)) Part.Text(prefix + shrinkInterface(p.text.removePrefix(prefix))) else p
                 else -> p
             }
         }

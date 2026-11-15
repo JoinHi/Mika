@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">Веб-браузер</string>
     <string name="live_stage_back">Назад на виртуальном экране</string>
     <string name="live_stage_snapshot_wake">Экран на паузе · Нажмите, чтобы продолжить</string>
+
+    <string name="role_live_voice">Модель голосового звонка</string>
+    <string name="role_live_voice_what">Живой голосовой диалог</string>
+    <string name="role_live_voice_need_gemini">Требуется Google Gemini</string>
+
+    <string name="live_in_call_label">В диалоге</string>
+    <string name="live_status_listening_ready">Слушаю · Скажите команду</string>
+    <string name="live_status_thinking">Mika думает…</string>
+    <string name="live_status_needs_attention">Ожидание вашего подтверждения</string>
+    <string name="live_status_searching">Поиск в сети…</string>
+    <string name="live_status_deep_thinking">Глубокое размышление…</string>
+
+    <string name="live_step_launching">Открытие %1$s</string>
+    <string name="live_step_tapping">Нажатие «%1$s»</string>
+    <string name="live_step_tapping_screen">Нажатие на экран</string>
+    <string name="live_step_typing">Ввод «%1$s»</string>
+    <string name="live_step_scrolling">Прокрутка</string>
+    <string name="live_step_waiting">Ожидание отклика экрана</string>
+    <string name="live_step_acting">Управление экраном</string>
+
+    <string name="live_voice_setup_lead">Голосовые звонки в реальном времени работают на нативных аудиомоделях Google Gemini Live. Укажите API-ключ Gemini, модель и голос для начала общения.</string>
+    <string name="live_voice_connect_title">Подключить Google Gemini</string>
+    <string name="live_voice_connect_save">Подключить и включить</string>
+    <string name="live_voice_enable_save">Сохранить и включить</string>
+    <string name="live_voice_disable">Отключить модель звонка</string>
+    <string name="live_subtitle_idle_hint">Говорите в любой момент, можно перебивать</string>
 </resources>

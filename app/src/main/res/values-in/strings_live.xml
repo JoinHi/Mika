@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">Browser web</string>
     <string name="live_stage_back">Kembali di layar virtual</string>
     <string name="live_stage_snapshot_wake">Layar dijeda · Ketuk untuk melanjutkan</string>
+
+    <string name="role_live_voice">Model panggilan suara</string>
+    <string name="role_live_voice_what">Percakapan suara waktu nyata</string>
+    <string name="role_live_voice_need_gemini">Memerlukan Google Gemini</string>
+
+    <string name="live_in_call_label">Dalam panggilan</string>
+    <string name="live_status_listening_ready">Mendengarkan · Ucapkan perintah</string>
+    <string name="live_status_thinking">Mika sedang berpikir…</string>
+    <string name="live_status_needs_attention">Menunggu konfirmasi Anda di layar</string>
+    <string name="live_status_searching">Mencari di web…</string>
+    <string name="live_status_deep_thinking">Berpikir mendalam…</string>
+
+    <string name="live_step_launching">Membuka %1$s</string>
+    <string name="live_step_tapping">Mengetuk \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">Mengetuk layar</string>
+    <string name="live_step_typing">Mengetik \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">Menggulir</string>
+    <string name="live_step_waiting">Menunggu respons layar</string>
+    <string name="live_step_acting">Mengoperasikan layar</string>
+
+    <string name="live_voice_setup_lead">Panggilan suara waktu nyata ditenagai model audio asli Google Gemini Live. Atur kunci API Gemini, model audio live, dan suara untuk mulai berbicara.</string>
+    <string name="live_voice_connect_title">Hubungkan Google Gemini</string>
+    <string name="live_voice_connect_save">Hubungkan dan aktifkan</string>
+    <string name="live_voice_enable_save">Simpan dan aktifkan</string>
+    <string name="live_voice_disable">Nonaktifkan model panggilan suara</string>
+    <string name="live_subtitle_idle_hint">Bicara kapan saja, bebas menyela</string>
 </resources>

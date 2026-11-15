@@ -10,6 +10,7 @@ import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderPresets
 import com.wangzan101.mika.settings.RoleChoice
 import com.wangzan101.mika.settings.RoleChoices
+import com.wangzan101.mika.personal.live.PersonalLiveConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -42,5 +43,39 @@ class ModelsCopyTest {
         assertEquals(emptyList<RoleChoice>(), fixedChoices(ModelRole.Main))
         assertEquals(listOf(RoleChoice.SameAsMain, RoleChoice.Off), fixedChoices(ModelRole.Vision))
         assertEquals(listOf(RoleChoice.SameAsMain), fixedChoices(ModelRole.Light))
+    }
+
+    @Test fun liveVoiceRoleLineReflectsConfigurationStateAndGeminiAvailability() {
+        val noGeminiUi = ui(RoleChoices())
+        val lineNoGemini = ModelsCopy.liveVoiceLine(noGeminiUi)
+        assertTrue(lineNoGemini.unset)
+        assertEquals("未设置", lineNoGemini.title)
+        assertEquals("需要 Google Gemini", lineNoGemini.subtitle)
+
+        val gemini = Provider("g1", "Gemini", ProviderConfig.Kind.Gemini, "https://generativelanguage.googleapis.com", emptyList())
+        val unconfiguredWithGemini = ModelSetupUi(
+            AddForm.of(ProviderPresets.all.first()),
+            providers = listOf(gemini),
+            keyed = setOf("g1"),
+            liveVoice = PersonalLiveConfig(configured = false),
+        )
+        val lineReadyToPick = ModelsCopy.liveVoiceLine(unconfiguredWithGemini)
+        assertTrue(lineReadyToPick.unset)
+        assertEquals("未设置", lineReadyToPick.title)
+        assertEquals("点这里选一个", lineReadyToPick.subtitle)
+
+        val configuredUi = unconfiguredWithGemini.copy(
+            liveVoice = PersonalLiveConfig(
+                providerId = "g1",
+                model = "gemini-2.5-flash-native-audio-preview-12-2025",
+                voiceName = "Kore",
+                configured = true,
+            ),
+        )
+        val lineConfigured = ModelsCopy.liveVoiceLine(configuredUi)
+        assertFalse(lineConfigured.unset)
+        assertTrue(lineConfigured.isModel)
+        assertEquals("gemini-2.5-flash-native-audio-preview-12-2025", lineConfigured.title)
+        assertEquals("Gemini · Kore", lineConfigured.subtitle)
     }
 }

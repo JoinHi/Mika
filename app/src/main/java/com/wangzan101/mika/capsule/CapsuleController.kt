@@ -780,8 +780,10 @@ class CapsuleController(
             LiveSessionPhase.Reconnecting -> tr(R.string.live_status_reconnecting)
             LiveSessionPhase.SuspendedByCall -> tr(R.string.live_status_suspended_call)
             LiveSessionPhase.Active -> when {
+                !st.activeActivityText.isNullOrBlank() -> st.activeActivityText
                 st.muted -> tr(R.string.live_status_muted)
                 st.speaking -> tr(R.string.live_status_speaking)
+                st.thinking -> tr(R.string.live_status_thinking)
                 else -> tr(R.string.live_status_listening)
             }
             LiveSessionPhase.Idle, LiveSessionPhase.Error -> return null

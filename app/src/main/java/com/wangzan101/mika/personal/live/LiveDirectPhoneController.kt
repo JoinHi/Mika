@@ -151,6 +151,13 @@ class LiveDirectPhoneController internal constructor(
         val atElapsedMs: Long,
     )
 
+    data class DirectStepProgress(
+        val op: String,
+        val target: String?,
+        val stepIndex: Int,
+        val totalSteps: Int,
+    )
+
     private class DirectGateStopException(
         val reason: String,
         val userMessage: String,
@@ -242,6 +249,9 @@ class LiveDirectPhoneController internal constructor(
 
     private val _activating = MutableStateFlow(false)
     val activating: StateFlow<Boolean> = _activating.asStateFlow()
+
+    private val _stepProgress = MutableStateFlow<DirectStepProgress?>(null)
+    val stepProgress: StateFlow<DirectStepProgress?> = _stepProgress.asStateFlow()
 
     private val _actionSeq = MutableStateFlow(0L)
     val actionSeq: StateFlow<Long> = _actionSeq.asStateFlow()
@@ -355,6 +365,7 @@ class LiveDirectPhoneController internal constructor(
                 try {
                     executeLocked(commands, startedMs, callTag)
                 } finally {
+                    _stepProgress.value = null
                     _activating.value = false
                     val nowTaskBusy = app.taskState.runs.value.isNotEmpty()
                     yieldRequested = nowTaskBusy
@@ -638,6 +649,15 @@ class LiveDirectPhoneController internal constructor(
         for ((index, command) in normalized.withIndex()) {
             currentCoroutineContext().ensureActive()
             val op = command.string("op")!!
+            val targetLabel = command.string("appName")
+                ?: command.string("targetText")
+                ?: command.string("text")
+            _stepProgress.value = DirectStepProgress(
+                op = op,
+                target = targetLabel?.takeIf { it.isNotBlank() },
+                stepIndex = index + 1,
+                totalSteps = normalized.size,
+            )
             val whenText = command.string("whenText")
             if (whenText != null) {
                 val matched = hasTextOnScreen(executor, callTag, index, whenText)

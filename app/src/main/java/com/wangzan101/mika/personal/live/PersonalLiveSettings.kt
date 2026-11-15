@@ -22,6 +22,7 @@ data class PersonalLiveConfig(
     val providerId: String = "",
     val model: String = GeminiLiveProtocol.DEFAULT_MODEL,
     val voiceName: String = GeminiLiveProtocol.DEFAULT_VOICE,
+    val configured: Boolean = false,
 )
 
 data class ResolvedLiveCredentials(
@@ -54,10 +55,22 @@ class PersonalLiveSettings(private val file: File) {
     fun geminiProviders(store: ProviderStore): List<Provider> =
         store.providers.value.filter { it.kind == ProviderConfig.Kind.Gemini && store.hasKey(it.id) }
 
+    fun rememberDiscoveredModels(providerId: String, models: List<String>) {
+        if (providerId.isNotBlank() && models.isNotEmpty()) {
+            _discoveredModels.value = _discoveredModels.value + (providerId to models)
+        }
+    }
+
+    fun resolveCandidateProvider(store: ProviderStore, providerIdOverride: String? = null): Provider? {
+        val candidates = geminiProviders(store)
+        val targetId = providerIdOverride?.takeIf { it.isNotBlank() } ?: _state.value.providerId
+        return candidates.firstOrNull { it.id == targetId } ?: candidates.firstOrNull()
+    }
+
     fun resolve(store: ProviderStore): ResolvedLiveCredentials? {
         val cfg = _state.value
-        val candidates = geminiProviders(store)
-        val chosen = candidates.firstOrNull { it.id == cfg.providerId } ?: candidates.firstOrNull() ?: return null
+        if (!cfg.configured) return null
+        val chosen = resolveCandidateProvider(store) ?: return null
         val key = store.providerKey(chosen.id)?.takeIf { it.isNotBlank() } ?: return null
         val discovered = _discoveredModels.value[chosen.id].orEmpty()
         val chosenModel = cfg.model.trim().takeIf { it.isNotBlank() }
@@ -72,18 +85,21 @@ class PersonalLiveSettings(private val file: File) {
         )
     }
 
-    suspend fun refreshModels(store: ProviderStore): Result<List<String>> = withContext(Dispatchers.IO) {
-        val creds = resolve(store) ?: return@withContext Result.failure(IllegalStateException("未配置可用的 Gemini 服务商与 API Key"))
+    suspend fun refreshModels(store: ProviderStore, providerIdOverride: String? = null): Result<List<String>> = withContext(Dispatchers.IO) {
+        val chosen = resolveCandidateProvider(store, providerIdOverride)
+            ?: return@withContext Result.failure(IllegalStateException("未配置可用的 Gemini 服务商与 API Key"))
+        val key = store.providerKey(chosen.id)?.takeIf { it.isNotBlank() }
+            ?: return@withContext Result.failure(IllegalStateException("未配置可用的 Gemini 服务商与 API Key"))
+        val baseUrl = chosen.baseUrl.ifBlank { "https://generativelanguage.googleapis.com" }
         val res = GeminiLiveModels.listBidiModels(
-            baseUrl = creds.baseUrl,
-            apiKey = creds.apiKey,
+            baseUrl = baseUrl,
+            apiKey = key,
             http = ProviderStore.modelHttp,
-            extraHeaders = store.clientHeaders(creds.provider),
+            extraHeaders = store.clientHeaders(chosen),
         )
         res.onSuccess { list ->
             if (list.isNotEmpty()) {
-                _discoveredModels.value = _discoveredModels.value + (creds.provider.id to list)
-                // If user is still on default model and their key exposes a newer native-audio bidi model while default isn't listed, auto-adopt the top bidi model.
+                _discoveredModels.value = _discoveredModels.value + (chosen.id to list)
                 val current = _state.value
                 if (current.model == GeminiLiveProtocol.DEFAULT_MODEL && current.model !in list) {
                     update { it.copy(model = list.first()) }
@@ -94,9 +110,12 @@ class PersonalLiveSettings(private val file: File) {
     }
 
     private fun load(): PersonalLiveConfig {
-        if (!file.isFile) return PersonalLiveConfig()
-        return runCatching { json.decodeFromString<PersonalLiveConfig>(file.readText()) }
-            .getOrDefault(PersonalLiveConfig())
+        if (!file.isFile) return PersonalLiveConfig(configured = false)
+        return runCatching {
+            val raw = file.readText()
+            val decoded = json.decodeFromString<PersonalLiveConfig>(raw)
+            if ("\"configured\"" !in raw) decoded.copy(configured = true) else decoded
+        }.getOrDefault(PersonalLiveConfig(configured = false))
     }
 
     private fun persist(cfg: PersonalLiveConfig) {

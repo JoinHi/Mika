@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">متصفح الويب</string>
     <string name="live_stage_back">رجوع في الشاشة الافتراضية</string>
     <string name="live_stage_snapshot_wake">الشاشة متوقفة مؤقتًا · انقر للمتابعة</string>
+
+    <string name="role_live_voice">نموذج المكالمة الصوتية</string>
+    <string name="role_live_voice_what">محادثة صوتية مباشرة</string>
+    <string name="role_live_voice_need_gemini">يتطلب Google Gemini</string>
+
+    <string name="live_in_call_label">في المحادثة</string>
+    <string name="live_status_listening_ready">قيد الاستماع · تحدث بأمرك</string>
+    <string name="live_status_thinking">Mika تفكر…</string>
+    <string name="live_status_needs_attention">بانتظار تأكيدك على الشاشة</string>
+    <string name="live_status_searching">جارٍ البحث في الويب…</string>
+    <string name="live_status_deep_thinking">تفكير عميق…</string>
+
+    <string name="live_step_launching">جارٍ فتح %1$s</string>
+    <string name="live_step_tapping">جارٍ النقر على \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">جارٍ النقر على الشاشة</string>
+    <string name="live_step_typing">جارٍ كتابة \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">جارٍ التمرير</string>
+    <string name="live_step_waiting">بانتظار استجابة الشاشة</string>
+    <string name="live_step_acting">جارٍ التحكم في الشاشة</string>
+
+    <string name="live_voice_setup_lead">تعمل المكالمات الصوتية المباشرة بنماذج الصوت الأصلية من Google Gemini Live. أضف مفتاح Gemini API واختر النموذج والصوت لبدء التحدث.</string>
+    <string name="live_voice_connect_title">الاتصال بـ Google Gemini</string>
+    <string name="live_voice_connect_save">اتصال وتفعيل</string>
+    <string name="live_voice_enable_save">حفظ وتفعيل</string>
+    <string name="live_voice_disable">تعطيل نموذج المكالمة الصوتية</string>
+    <string name="live_subtitle_idle_hint">تحدث في أي وقت ويمكنك المقاطعة بحرية</string>
 </resources>

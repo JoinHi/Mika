@@ -562,6 +562,10 @@ private fun MikaRoot(
                             memoryRuntime = memoryRuntime,
                             onModels = { nav.push(Route.Models) },
                             onPickSpeech = { nav.push(Route.SpeechModel) },
+                            onOpenLiveVoice = {
+                                nav.push(Route.Models)
+                                nav.push(Route.LiveVoiceModel)
+                            },
                         ) else ChatScreen(
                             vm = app.chat,
                             check = check,
@@ -627,9 +631,16 @@ private fun MikaRoot(
                 updateVersion = updateState.update?.version, onOpenAbout = { nav.push(Route.About) },
                 mcpServers = app.mcpServers)
         }
-        Route.Models -> ModelsScreen(store, onBack = back, onOpenSpeech = { nav.push(Route.SpeechModel) }, onOpenUsage = { nav.push(Route.Usage) })
+        Route.Models -> ModelsScreen(
+            store,
+            onBack = back,
+            onOpenSpeech = { nav.push(Route.SpeechModel) },
+            onOpenLiveVoice = { nav.push(Route.LiveVoiceModel) },
+            onOpenUsage = { nav.push(Route.Usage) },
+        )
         Route.Usage -> UsageScreen(app.usage, store, onBack = back, onOpenUrl = { openInBrowser(context, it) })
         Route.SpeechModel -> SpeechModelScreen(store, onBack = back)
+        Route.LiveVoiceModel -> LiveVoiceModelScreen(store, app.personal.live, onBack = back)
         Route.About -> AboutScreen(
             versionName = BuildConfig.VERSION_NAME, build = BuildConfig.GIT_HASH, beta = BuildConfig.BETA,
             update = updateState,

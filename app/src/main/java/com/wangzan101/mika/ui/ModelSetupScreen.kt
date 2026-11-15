@@ -102,6 +102,8 @@ fun ModelSetupScreen(
     store: ProviderStore, onboarding: Boolean, onBack: () -> Unit, onDone: () -> Unit,
     /** 设置里点「语音转文字」卡片去选择页;上手流程不传,卡片就不出现。 */
     onOpenSpeech: (() -> Unit)? = null,
+    /** 设置里点「语音通话模型」卡片去实时语音模型与音色配置页;上手流程不传。 */
+    onOpenLiveVoice: (() -> Unit)? = null,
     /** 设置里查看 Token 用量;上手流程不传。 */
     onOpenUsage: (() -> Unit)? = null,
 ) {
@@ -116,6 +118,7 @@ fun ModelSetupScreen(
                 val silent = (context.applicationContext as? MikaApp)?.speech?.systemSilent?.value ?: false
                 SystemSpeech.capability(context.applicationContext, silent)
             },
+            liveSettings = (context.applicationContext as? MikaApp)?.personal?.live?.settings,
         )
     }
     val ui by vm.state.collectAsState()
@@ -241,6 +244,7 @@ fun ModelSetupScreen(
                     testAndSave = vm::testAndSave, saveUntested = vm::saveWithoutTest,
                     openForm = vm::openForm, closeForm = vm::closeForm,
                     openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it }, pickFallback = { pickingFallback = it }, next = onDone, openSpeech = onOpenSpeech,
+                    openLiveVoice = onOpenLiveVoice,
                     openUsage = onOpenUsage,
                     openDecision = { openDecision = true },
                     openSignIn = { signInSheet = it },
@@ -295,6 +299,8 @@ class ModelSetupActions(
     val pickFallback: (Int) -> Unit = {},
     /** 打开「语音转文字」的选择页;为 null 时不显示这张卡(上手流程)。 */
     val openSpeech: (() -> Unit)? = null,
+    /** 打开「语音通话模型」的选择页;为 null 时不显示这张卡(上手流程)。 */
+    val openLiveVoice: (() -> Unit)? = null,
     /** 打开 Token 用量;为 null 时不显示入口(上手流程)。 */
     val openUsage: (() -> Unit)? = null,
     /** Independent opt-in decision service; the three model roles remain unchanged. */
@@ -333,7 +339,7 @@ fun ModelSetupContent(ui: ModelSetupUi, onboarding: Boolean, actions: ModelSetup
                     RolesSection(ui, onPick, actions.setReasoningEffort, null)
                     FooterNote(ModelSetupCopy.ONBOARDING_NOTE)
                 } else {
-                    RolesSection(ui, onPick, actions.setReasoningEffort, actions.openSpeech, actions.setModelContext, actions.pickFallback)
+                    RolesSection(ui, onPick, actions.setReasoningEffort, actions.openSpeech, actions.setModelContext, actions.pickFallback, actions.openLiveVoice)
                     actions.openDecision?.let { openDecision ->
                         GroupCard {
                             ListRow(MikaIcons.Route, stringResource(R.string.jev_title), stringResource(R.string.jev_row_sub),
@@ -582,6 +588,7 @@ internal object SignInPage {
 private fun RolesSection(ui: ModelSetupUi, onPick: (ModelRole) -> Unit, onReasoning: (ModelRole, String?) -> Unit,
     onSpeech: (() -> Unit)?, onContext: ((String, ModelContextSettings) -> Boolean)? = null,
     onPickFallback: ((Int) -> Unit)? = null,
+    onLiveVoice: (() -> Unit)? = null,
 ) {
     GroupLabel(ModelsCopy.ROLES)
     GroupCard {
@@ -617,6 +624,10 @@ private fun RolesSection(ui: ModelSetupUi, onPick: (ModelRole) -> Unit, onReason
         // 第四个用途:语音转文字(不是对话模型,点开是单独的选择页)
         if (onSpeech != null) {
             RoleCard(ModelsCopy.SPEECH_ICON, ModelsCopy.SPEECH_LABEL, ModelsCopy.speechLine(ui), tag = "role-speech", onClick = onSpeech)
+        }
+        // 第五个用途:语音通话模型(Gemini Live 原生音频模型与音色,点开是单独的配置页)
+        if (onLiveVoice != null) {
+            RoleCard(ModelsCopy.LIVE_VOICE_ICON, ModelsCopy.LIVE_VOICE_LABEL, ModelsCopy.liveVoiceLine(ui), tag = "role-live-voice", onClick = onLiveVoice)
         }
     }
 }

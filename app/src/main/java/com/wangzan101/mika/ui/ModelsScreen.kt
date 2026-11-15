@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wangzan101.mika.core.chatgpt.SignInFailure
+import com.wangzan101.mika.core.live.GeminiLiveProtocol
 import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.settings.ModelOption
 import com.wangzan101.mika.settings.ModelOptions
@@ -97,8 +98,22 @@ import com.wangzan101.mika.voice.SpeechOptions
 
 /** 设置 › 模型:和上手时的配置模型是同一页([ModelSetupScreen]),不在引导流程里。 */
 @Composable
-fun ModelsScreen(store: ProviderStore, onBack: () -> Unit, onOpenSpeech: (() -> Unit)? = null, onOpenUsage: (() -> Unit)? = null) {
-    ModelSetupScreen(store, onboarding = false, onBack = onBack, onDone = onBack, onOpenSpeech = onOpenSpeech, onOpenUsage = onOpenUsage)
+fun ModelsScreen(
+    store: ProviderStore,
+    onBack: () -> Unit,
+    onOpenSpeech: (() -> Unit)? = null,
+    onOpenLiveVoice: (() -> Unit)? = null,
+    onOpenUsage: (() -> Unit)? = null,
+) {
+    ModelSetupScreen(
+        store,
+        onboarding = false,
+        onBack = onBack,
+        onDone = onBack,
+        onOpenSpeech = onOpenSpeech,
+        onOpenLiveVoice = onOpenLiveVoice,
+        onOpenUsage = onOpenUsage,
+    )
 }
 
 /** 子页面共用的骨架:顶栏 + 可滚动内容。 */
@@ -854,6 +869,26 @@ object ModelsCopy {
         val s = SpeechOptions.summary(ui.speech, ui.systemSpeech, ui.providers)
         val unset = s.title == UNSET
         return RoleLine(s.title, s.sub.orEmpty(), isModel = !unset && (ui.speech is SpeechChoice.Provider || ui.speech is SpeechChoice.Doubao || ui.speech is SpeechChoice.FunAsr || ui.speech is SpeechChoice.Bailian), unset = unset, subtitleOk = s.subOk)
+    }
+
+    /** 第五个用途「语音通话模型」:用于全双工实时语音对话(Gemini Live 原生音频与通话音色)。 */
+    val LIVE_VOICE_LABEL: String get() = "${tr(R.string.role_live_voice)} · ${tr(R.string.role_live_voice_what)}"
+    val LIVE_VOICE_ICON: ImageVector get() = MikaIcons.Sound
+
+    fun liveVoiceLine(ui: ModelSetupUi): RoleLine {
+        val geminiProviders = ui.providers.filter { it.kind == ProviderConfig.Kind.Gemini && it.id in ui.keyed }
+        val chosen = geminiProviders.firstOrNull { it.id == ui.liveVoice.providerId } ?: geminiProviders.firstOrNull()
+        return if (ui.liveVoice.configured && chosen != null) {
+            val model = ui.liveVoice.model.ifBlank { GeminiLiveProtocol.DEFAULT_MODEL }
+            val voice = ui.liveVoice.voiceName.ifBlank { GeminiLiveProtocol.DEFAULT_VOICE }
+            RoleLine(model, "${providerName(chosen)} · $voice", isModel = true)
+        } else {
+            RoleLine(
+                UNSET,
+                if (geminiProviders.isEmpty()) tr(R.string.role_live_voice_need_gemini) else MAIN_PICK,
+                unset = true,
+            )
+        }
     }
 
     /** 主模型备援(项目 3)的卡片图标、名字和右边两行:和用途卡同一套说法。 */

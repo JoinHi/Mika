@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">웹 브라우저</string>
     <string name="live_stage_back">가상 화면 뒤로</string>
     <string name="live_stage_snapshot_wake">화면 일시정지됨 · 탭하여 조작 재개</string>
+
+    <string name="role_live_voice">음성 통화 모델</string>
+    <string name="role_live_voice_what">실시간 음성 대화</string>
+    <string name="role_live_voice_need_gemini">Google Gemini 필요</string>
+
+    <string name="live_in_call_label">대화 중</string>
+    <string name="live_status_listening_ready">듣는 중 · 명령을 말씀해 주세요</string>
+    <string name="live_status_thinking">Mika 생각 중…</string>
+    <string name="live_status_needs_attention">화면 확인 대기 중</string>
+    <string name="live_status_searching">웹 검색 중…</string>
+    <string name="live_status_deep_thinking">깊이 생각하는 중…</string>
+
+    <string name="live_step_launching">%1$s 여는 중</string>
+    <string name="live_step_tapping">\&quot;%1$s\&quot; 탭하는 중</string>
+    <string name="live_step_tapping_screen">화면 탭하는 중</string>
+    <string name="live_step_typing">\&quot;%1$s\&quot; 입력 중</string>
+    <string name="live_step_scrolling">스크롤 중</string>
+    <string name="live_step_waiting">화면 응답 대기 중</string>
+    <string name="live_step_acting">화면 조작 중</string>
+
+    <string name="live_voice_setup_lead">실시간 음성 통화는 Google Gemini Live 네이티브 오디오 모델로 구동됩니다. Gemini API 키, 실시간 오디오 모델, 음성을 설정하면 통화를 시작할 수 있습니다.</string>
+    <string name="live_voice_connect_title">Google Gemini 연결</string>
+    <string name="live_voice_connect_save">연결 및 활성화</string>
+    <string name="live_voice_enable_save">저장 및 활성화</string>
+    <string name="live_voice_disable">음성 통화 모델 비활성화</string>
+    <string name="live_subtitle_idle_hint">언제든 말씀하거나 끼어들 수 있습니다</string>
 </resources>

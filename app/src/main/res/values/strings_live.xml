@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">Web browser</string>
     <string name="live_stage_back">Virtual screen back</string>
     <string name="live_stage_snapshot_wake">Screen paused · Tap to resume</string>
+
+    <string name="role_live_voice">Voice call model</string>
+    <string name="role_live_voice_what">Real-time voice call</string>
+    <string name="role_live_voice_need_gemini">Requires Google Gemini</string>
+
+    <string name="live_in_call_label">In call</string>
+    <string name="live_status_listening_ready">Listening · Speak a command</string>
+    <string name="live_status_thinking">Mika is thinking…</string>
+    <string name="live_status_needs_attention">Waiting for your confirmation</string>
+    <string name="live_status_searching">Searching the web…</string>
+    <string name="live_status_deep_thinking">Thinking deeply…</string>
+
+    <string name="live_step_launching">Opening %1$s</string>
+    <string name="live_step_tapping">Tapping \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">Tapping screen</string>
+    <string name="live_step_typing">Typing \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">Scrolling</string>
+    <string name="live_step_waiting">Waiting for screen</string>
+    <string name="live_step_acting">Operating screen</string>
+
+    <string name="live_voice_setup_lead">Real-time voice calls are powered by Google Gemini Live native audio models. Configure a Gemini API key, live audio model, and voice to start talking.</string>
+    <string name="live_voice_connect_title">Connect Google Gemini</string>
+    <string name="live_voice_connect_save">Connect and enable</string>
+    <string name="live_voice_enable_save">Save and enable</string>
+    <string name="live_voice_disable">Disable voice call model</string>
+    <string name="live_subtitle_idle_hint">Speak anytime, interrupt freely</string>
 </resources>

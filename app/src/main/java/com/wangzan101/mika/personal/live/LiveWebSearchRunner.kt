@@ -13,6 +13,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
@@ -35,6 +39,8 @@ internal class LiveWebSearchRunner(
 ) {
     private val lock = Any()
     private val asyncJobs = HashSet<Job>()
+    private val _activeCount = MutableStateFlow(0)
+    val activeCount: StateFlow<Int> = _activeCount.asStateFlow()
 
     fun isSearchEnabled(): Boolean = searchProvider() != null
 
@@ -58,12 +64,20 @@ internal class LiveWebSearchRunner(
             )
         }
         val count = (rawCount ?: DEFAULT_COUNT).coerceIn(1, MAX_LIVE_COUNT)
+        _activeCount.update { it + 1 }
         val deferred = scope.async(Dispatchers.IO) {
             service.search(query, count)
         }
 
-        val immediate = withTimeoutOrNull(FAST_SYNC_TIMEOUT_MS) { deferred.await() }
+        val immediate = try {
+            withTimeoutOrNull(FAST_SYNC_TIMEOUT_MS) { deferred.await() }
+        } catch (e: CancellationException) {
+            deferred.cancel()
+            _activeCount.update { (it - 1).coerceAtLeast(0) }
+            throw e
+        }
         if (immediate != null) {
+            _activeCount.update { (it - 1).coerceAtLeast(0) }
             return toToolPayload(query, immediate)
         }
 
@@ -77,6 +91,7 @@ internal class LiveWebSearchRunner(
                 deferred.cancel()
                 throw e
             } finally {
+                _activeCount.update { (it - 1).coerceAtLeast(0) }
                 onStatusHint(null)
             }
         }
@@ -106,6 +121,7 @@ internal class LiveWebSearchRunner(
             copy
         }
         jobs.forEach { it.cancel() }
+        _activeCount.value = 0
     }
 
     private fun trackJob(job: Job) {

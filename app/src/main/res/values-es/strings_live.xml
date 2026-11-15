@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">Navegador web</string>
     <string name="live_stage_back">Atrás en pantalla virtual</string>
     <string name="live_stage_snapshot_wake">Pantalla en pausa · Toca para reanudar</string>
+
+    <string name="role_live_voice">Modelo de llamada de voz</string>
+    <string name="role_live_voice_what">Conversación de voz en tiempo real</string>
+    <string name="role_live_voice_need_gemini">Requiere Google Gemini</string>
+
+    <string name="live_in_call_label">En llamada</string>
+    <string name="live_status_listening_ready">Escuchando · Di una instrucción</string>
+    <string name="live_status_thinking">Mika está pensando…</string>
+    <string name="live_status_needs_attention">Esperando tu confirmación en pantalla</string>
+    <string name="live_status_searching">Buscando en la web…</string>
+    <string name="live_status_deep_thinking">Pensando en profundidad…</string>
+
+    <string name="live_step_launching">Abriendo %1$s</string>
+    <string name="live_step_tapping">Tocando \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">Tocando la pantalla</string>
+    <string name="live_step_typing">Escribiendo \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">Desplazando</string>
+    <string name="live_step_waiting">Esperando la pantalla</string>
+    <string name="live_step_acting">Operando la pantalla</string>
+
+    <string name="live_voice_setup_lead">Las llamadas en tiempo real funcionan con modelos de audio nativo de Google Gemini Live. Configura una clave API de Gemini, el modelo y la voz para empezar.</string>
+    <string name="live_voice_connect_title">Conectar Google Gemini</string>
+    <string name="live_voice_connect_save">Conectar y activar</string>
+    <string name="live_voice_enable_save">Guardar y activar</string>
+    <string name="live_voice_disable">Desactivar modelo de llamada de voz</string>
+    <string name="live_subtitle_idle_hint">Habla en cualquier momento, puedes interrumpir</string>
 </resources>

@@ -151,6 +151,7 @@ class PersonalLiveService : Service() {
                 LiveSessionPhase.Reconnecting -> tr(R.string.live_status_reconnecting)
                 LiveSessionPhase.SuspendedByCall -> tr(R.string.live_status_suspended_call)
                 LiveSessionPhase.Active -> when {
+                    !state.activeActivityText.isNullOrBlank() -> state.activeActivityText
                     state.muted -> tr(R.string.live_status_muted)
                     state.speaking -> tr(R.string.live_status_speaking)
                     state.activeTaskCount > 0 -> tr(R.string.live_status_listening_tasks, state.activeTaskCount)

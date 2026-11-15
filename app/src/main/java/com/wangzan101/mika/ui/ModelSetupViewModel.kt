@@ -31,6 +31,8 @@ import com.wangzan101.mika.voice.SpeechChoice
 import com.wangzan101.mika.voice.SpeechSettings
 import com.wangzan101.mika.voice.SystemCapability
 import com.wangzan101.mika.voice.Transcriber
+import com.wangzan101.mika.personal.live.PersonalLiveConfig
+import com.wangzan101.mika.personal.live.PersonalLiveSettings
 import com.wangzan101.mika.core.chatgpt.ChatGptAuth
 import com.wangzan101.mika.core.chatgpt.SignInException
 import com.wangzan101.mika.core.chatgpt.SignInFailure
@@ -235,6 +237,8 @@ data class ModelSetupUi(
     val systemSpeech: SystemCapability = SystemCapability(available = false, onDevice = false),
     /** 正在拿一小段录音试转的服务商 id;没有时为 null。 */
     val speechTesting: String? = null,
+    /** 实时语音通话模型与音色配置(供「语音通话模型」用途卡展示)。 */
+    val liveVoice: PersonalLiveConfig = PersonalLiveConfig(),
 ) {
     /** 还没有服务商时表单总是展开。 */
     val showForm: Boolean get() = formOpen || providers.isEmpty()
@@ -315,6 +319,8 @@ class ModelSetupViewModel(
     private val systemSpeech: () -> SystemCapability = { SystemCapability(available = false, onDevice = false) },
     /** 选语音模型时试转用的转写器,和按住说话用的是同一种建法(带客户端标识头)。 */
     private val transcriber: (Provider) -> Transcriber = { p -> Transcriber(ProviderStore.modelHttp, store.clientHeaders(p)) },
+    /** 语音通话模型的配置状态;测试和上手流程不传。 */
+    private val liveSettings: PersonalLiveSettings? = null,
 ) {
     private val _state = MutableStateFlow(snapshot(ModelSetupUi(AddForm.of(ProviderPresets.all.first()))))
     val state: StateFlow<ModelSetupUi> = _state.asStateFlow()
@@ -331,6 +337,7 @@ class ModelSetupViewModel(
         // 别处(开发者选项等)改了存储时跟着更新
         scope.launch { merge(store.providers, store.configs, store.roles).collect { sync() } }
         speech?.let { s -> scope.launch { s.choice.collect { sync() } } }
+        liveSettings?.let { ls -> scope.launch { ls.state.collect { sync() } } }
         // 登录在别处结束(通知上取消了)或界面重建前就开始了:跟着它的进度
         scope.launch {
             signIns.running.collect { running ->
@@ -397,6 +404,7 @@ class ModelSetupViewModel(
             openRouterAccount = store.openRouterAccount()?.let { p -> SubscriptionAccount("", store.hasKey(p.id)) },
             speech = speech?.choice?.value ?: SpeechChoice.Auto,
             systemSpeech = systemSpeech(),
+            liveVoice = liveSettings?.state?.value ?: ui.liveVoice,
         )
     }
 

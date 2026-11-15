@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">مرورگر وب</string>
     <string name="live_stage_back">بازگشت صفحه مجازی</string>
     <string name="live_stage_snapshot_wake">صفحه متوقف شده است · برای ادامه ضربه بزنید</string>
+
+    <string name="role_live_voice">مدل تماس صوتی</string>
+    <string name="role_live_voice_what">گفتگوی صوتی زنده</string>
+    <string name="role_live_voice_need_gemini">نیازمند Google Gemini</string>
+
+    <string name="live_in_call_label">در حال گفتگو</string>
+    <string name="live_status_listening_ready">در حال گوش دادن · دستور خود را بگویید</string>
+    <string name="live_status_thinking">Mika در حال فکر کردن…</string>
+    <string name="live_status_needs_attention">در انتظار تایید شما روی صفحه</string>
+    <string name="live_status_searching">در حال جستجوی وب…</string>
+    <string name="live_status_deep_thinking">تفکر عمیق…</string>
+
+    <string name="live_step_launching">در حال باز کردن %1$s</string>
+    <string name="live_step_tapping">ضربه زدن روی \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">ضربه زدن روی صفحه</string>
+    <string name="live_step_typing">در حال تایپ \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">در حال پیمایش</string>
+    <string name="live_step_waiting">در انتظار پاسخ صفحه</string>
+    <string name="live_step_acting">در حال کنترل صفحه</string>
+
+    <string name="live_voice_setup_lead">تماس صوتی زنده با مدل‌های صوتی بومی Google Gemini Live کار می‌کند. کلید Gemini API، مدل صوتی و صدای تماس را تنظیم کنید تا گفتگو آغاز شود.</string>
+    <string name="live_voice_connect_title">اتصال به Google Gemini</string>
+    <string name="live_voice_connect_save">اتصال و فعال‌سازی</string>
+    <string name="live_voice_enable_save">ذخیره و فعال‌سازی</string>
+    <string name="live_voice_disable">غیرفعال کردن مدل تماس صوتی</string>
+    <string name="live_subtitle_idle_hint">هر زمان خواستید صحبت کنید</string>
 </resources>

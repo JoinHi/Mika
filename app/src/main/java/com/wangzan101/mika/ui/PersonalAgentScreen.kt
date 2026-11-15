@@ -113,6 +113,7 @@ fun PersonalAgentScreen(
     memoryRuntime: MemoryRuntime,
     onModels: () -> Unit,
     onPickSpeech: () -> Unit,
+    onOpenLiveVoice: () -> Unit = {},
 ) {
     val state by runtime.state.collectAsState()
     val liveState by runtime.live.uiState.collectAsState()
@@ -124,10 +125,6 @@ fun PersonalAgentScreen(
     var draft by rememberSaveable { mutableStateOf("") }
     var voiceHolding by remember { mutableStateOf(false) }
     var profile by rememberSaveable { mutableStateOf(false) }
-    var showLiveSettings by rememberSaveable { mutableStateOf(false) }
-    var typingInLive by rememberSaveable { mutableStateOf(false) }
-    var showChatInLive by rememberSaveable { mutableStateOf(false) }
-    var touchOperateInLive by rememberSaveable { mutableStateOf(true) }
     var selectedTask by rememberSaveable { mutableStateOf<String?>(null) }
     var replayTask by rememberSaveable { mutableStateOf<String?>(null) }
     var openingPreview by remember { mutableStateOf<PersonalPhonePreview?>(null) }
@@ -152,9 +149,6 @@ fun PersonalAgentScreen(
     val liveStage by liveStageFlow.collectAsState(initial = LiveScreenStageState())
     val pendingLiveConfirmFlow = remember(runtime, activeIds) { runtime.livePendingConfirmation(activeIds) }
     val pendingLiveConfirm by pendingLiveConfirmFlow.collectAsState(initial = null)
-    val hasLiveScreenActivity = liveStage.frame != null || liveStage.isPreparing
-    var prevLiveScreenActivity by remember { mutableStateOf(false) }
-    var lastSeenActionSeq by remember { mutableLongStateOf(liveStage.actionSeq) }
     val zone = remember { ZoneId.systemDefault() }
     val dayFormat = personalDayFormat()
     val context = LocalContext.current
@@ -188,73 +182,65 @@ fun PersonalAgentScreen(
         previousComposerHeight = composerHeight
         if (growth > 0 && followLatest && !list.isScrollInProgress) list.scrollBy(growth.toFloat())
     }
-    LaunchedEffect(liveState.phase.isRunning) {
-        if (!liveState.phase.isRunning) {
-            typingInLive = false
-            showChatInLive = false
-            touchOperateInLive = true
-        } else {
-            touchOperateInLive = true
-        }
-    }
-    LaunchedEffect(hasLiveScreenActivity, liveStage.actionSeq, liveState.phase.isRunning) {
-        val newAction = liveStage.actionSeq != lastSeenActionSeq
-        lastSeenActionSeq = liveStage.actionSeq
-        if (liveState.phase.isRunning && !typingInLive &&
-            ((hasLiveScreenActivity && !prevLiveScreenActivity) || newAction)
-        ) {
-            showChatInLive = false
-        }
-        prevLiveScreenActivity = hasLiveScreenActivity
-    }
-    val showingLiveStage = liveState.phase.isRunning && !typingInLive && !showChatInLive
     val stageInput = liveStage.pipInput.takeIf { liveStage.frame?.isRecycled == false }
-    val liveTouchInteractive = showingLiveStage && touchOperateInLive && stageInput != null
+    val liveTouchInteractive = liveState.phase.isRunning && stageInput != null
     DisposableEffect(stageInput, liveTouchInteractive) {
         if (liveTouchInteractive) stageInput?.onInteractiveChanged(true)
         onDispose {
             if (liveTouchInteractive) stageInput?.onInteractiveChanged(false)
         }
     }
-    val canStageHandleBack = touchOperateInLive && stageInput != null
-    BackHandler(enabled = liveState.phase.isRunning && (typingInLive || showChatInLive || canStageHandleBack)) {
-        when {
-            typingInLive -> {
-                keyboard?.hide()
-                typingInLive = false
-            }
-            showChatInLive -> {
-                showChatInLive = false
-            }
-            stageInput != null -> {
-                scope.launch { stageInput.back() }
-            }
-        }
+    BackHandler(enabled = liveState.phase.isRunning && stageInput != null) {
+        stageInput?.let { input -> scope.launch { input.back() } }
     }
 
     Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding().testTag("personal-screen")) {
         if (liveState.phase.isRunning) {
-            PersonalLiveCallTopBar(
-                live = runtime.live,
+            PersonalLiveDynamicTopBar(
                 liveState = liveState,
                 stage = liveStage,
                 activeTasks = active,
-                showingChat = typingInLive || showChatInLive,
-                touchOperate = touchOperateInLive,
+                hasPendingConfirmation = pendingLiveConfirm != null,
+                reduceMotion = reduceMotion,
                 onOpenDrawer = onOpenDrawer,
                 onOpenActivity = { profile = true },
                 onOpenTask = { selectedTask = it.id },
-                onToggleChat = {
-                    if (typingInLive) {
-                        keyboard?.hide()
-                        typingInLive = false
-                        showChatInLive = false
-                    } else {
-                        showChatInLive = !showChatInLive
-                    }
-                },
-                onToggleTouchOperate = { touchOperateInLive = !touchOperateInLive },
-                onOpenLiveSettings = { showLiveSettings = true },
+            )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                PersonalLiveScreenStage(
+                    stage = liveStage,
+                    liveState = liveState,
+                    activeTasks = active,
+                    touchOperate = true,
+                    reduceMotion = reduceMotion,
+                    onWakeRetainedStage = { runtime.live.wakeRetainedStage() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            pendingLiveConfirm?.let { confirmPrompt ->
+                key(confirmPrompt.promptKey) {
+                    LiveConfirmationCard(
+                        prompt = confirmPrompt,
+                        onApprove = { runtime.live.approveConfirmationFromUi(confirmPrompt) },
+                        onDecline = { runtime.live.declineConfirmationFromUi(confirmPrompt) },
+                    )
+                }
+            }
+            if (!liveState.statusHint.isNullOrBlank()) {
+                LiveHintChip(
+                    text = liveState.statusHint.orEmpty(),
+                    onDismiss = runtime.live::clearError,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+            }
+            PersonalLiveSubtitleRow(
+                state = liveState,
+                reduceMotion = reduceMotion,
+            )
+            PersonalLiveBottomCallCapsule(
+                state = liveState,
+                reduceMotion = reduceMotion,
+                onHangup = { runtime.live.stop() },
             )
         } else {
             PersonalHeader(
@@ -267,23 +253,11 @@ fun PersonalAgentScreen(
                     PersonalLiveLauncherPill(
                         live = runtime.live,
                         state = liveState,
-                        onOpenSettings = { showLiveSettings = true },
+                        onOpenLiveVoice = onOpenLiveVoice,
                     )
                 },
             )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth().voiceDim(voiceHolding, reduceMotion)) {
-            if (showingLiveStage) {
-                PersonalLiveScreenStage(
-                    stage = liveStage,
-                    liveState = liveState,
-                    activeTasks = active,
-                    touchOperate = touchOperateInLive,
-                    reduceMotion = reduceMotion,
-                    onWakeRetainedStage = { runtime.live.wakeRetainedStage() },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
+            Box(Modifier.weight(1f).fillMaxWidth().voiceDim(voiceHolding, reduceMotion)) {
                 LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("personal-timeline"),
                     contentPadding = PaddingValues(horizontal = MikaSpace.Page, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -329,44 +303,8 @@ fun PersonalAgentScreen(
                     onClick = { followLatest = true; scope.launch { list.scrollToItem(messages.size) } },
                     modifier = Modifier.align(Alignment.BottomCenter).background(c.surface, CircleShape)) { Text(stringResource(R.string.personal_latest)) }
             }
-        }
-        if (liveState.phase.isRunning) {
-            pendingLiveConfirm?.let { confirmPrompt ->
-                key(confirmPrompt.promptKey) {
-                    LiveConfirmationCard(
-                        prompt = confirmPrompt,
-                        onApprove = { runtime.live.approveConfirmationFromUi(confirmPrompt) },
-                        onDecline = { runtime.live.declineConfirmationFromUi(confirmPrompt) },
-                    )
-                }
-            }
-        }
-        if (liveState.phase.isRunning && !typingInLive) {
-            PersonalLiveBar(
-                state = liveState,
-                reduceMotion = reduceMotion,
-                onToggleMute = runtime.live::toggleMute,
-                onShareScreen = runtime.live::shareMainScreenNow,
-                onSwitchToKeyboard = { typingInLive = true },
-                onOpenSettings = { showLiveSettings = true },
-                onDismissHint = runtime.live::clearError,
-                onHangup = { runtime.live.stop() },
-                showSubtitlesInline = !showingLiveStage,
-                modifier = Modifier.onSizeChanged { composerHeight = it.height },
-            )
-        } else {
             Column(Modifier.fillMaxWidth().onSizeChanged { composerHeight = it.height }) {
-                if (liveState.phase.isRunning && typingInLive) {
-                    PersonalLiveCompactBanner(
-                        state = liveState,
-                        onBackToVoiceBar = {
-                            keyboard?.hide()
-                            typingInLive = false
-                        },
-                        onToggleMute = runtime.live::toggleMute,
-                        onHangup = { runtime.live.stop() },
-                    )
-                } else if (!liveState.statusHint.isNullOrBlank()) {
+                if (!liveState.statusHint.isNullOrBlank()) {
                     LiveHintChip(
                         text = liveState.statusHint.orEmpty(),
                         onDismiss = runtime.live::clearError,
@@ -382,7 +320,7 @@ fun PersonalAgentScreen(
                     onSend = ::send,
                     onStop = {},
                     reduceMotion = reduceMotion,
-                    voice = if (liveState.phase.isRunning) null else voice,
+                    voice = voice,
                     onVoiceText = { draft = HoldToTalk.join(draft, it) },
                     onPickSpeech = onPickSpeech,
                     onVoiceHolding = { voiceHolding = it },
@@ -390,14 +328,6 @@ fun PersonalAgentScreen(
                 )
             }
         }
-    }
-    if (showLiveSettings) {
-        PersonalLiveSettingsSheet(
-            live = runtime.live,
-            state = liveState,
-            onDismiss = { showLiveSettings = false },
-            onOpenModels = onModels,
-        )
     }
     if (profile) {
         PersonalProfileDialog(

@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">Navegador web</string>
     <string name="live_stage_back">Voltar na tela virtual</string>
     <string name="live_stage_snapshot_wake">Tela pausada · Toque para retomar</string>
+
+    <string name="role_live_voice">Modelo de chamada de voz</string>
+    <string name="role_live_voice_what">Conversa por voz em tempo real</string>
+    <string name="role_live_voice_need_gemini">Requer Google Gemini</string>
+
+    <string name="live_in_call_label">Em conversa</string>
+    <string name="live_status_listening_ready">Ouvindo · Diga um comando</string>
+    <string name="live_status_thinking">Mika está pensando…</string>
+    <string name="live_status_needs_attention">Aguardando sua confirmação na tela</string>
+    <string name="live_status_searching">Pesquisando na web…</string>
+    <string name="live_status_deep_thinking">Pensando profundamente…</string>
+
+    <string name="live_step_launching">Abrindo %1$s</string>
+    <string name="live_step_tapping">Tocando em \&quot;%1$s\&quot;</string>
+    <string name="live_step_tapping_screen">Tocando na tela</string>
+    <string name="live_step_typing">Digitando \&quot;%1$s\&quot;</string>
+    <string name="live_step_scrolling">Rolando</string>
+    <string name="live_step_waiting">Aguardando a tela</string>
+    <string name="live_step_acting">Operando a tela</string>
+
+    <string name="live_voice_setup_lead">As chamadas de voz em tempo real usam modelos de áudio nativo do Google Gemini Live. Configure uma chave de API do Gemini, o modelo e a voz para começar.</string>
+    <string name="live_voice_connect_title">Conectar Google Gemini</string>
+    <string name="live_voice_connect_save">Conectar e ativar</string>
+    <string name="live_voice_enable_save">Salvar e ativar</string>
+    <string name="live_voice_disable">Desativar modelo de chamada de voz</string>
+    <string name="live_subtitle_idle_hint">Fale a qualquer momento, interrompa livremente</string>
 </resources>

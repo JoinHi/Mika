@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">網頁瀏覽</string>
     <string name="live_stage_back">虛擬螢幕返回</string>
     <string name="live_stage_snapshot_wake">畫面已休眠 · 輕觸恢復操控</string>
+
+    <string name="role_live_voice">語音通話模型</string>
+    <string name="role_live_voice_what">即時語音對話</string>
+    <string name="role_live_voice_need_gemini">需要 Google Gemini</string>
+
+    <string name="live_in_call_label">對話中</string>
+    <string name="live_status_listening_ready">正在聆聽 · 請下指令</string>
+    <string name="live_status_thinking">Mika 思考中…</string>
+    <string name="live_status_needs_attention">等待你在螢幕上確認</string>
+    <string name="live_status_searching">正在連網搜尋…</string>
+    <string name="live_status_deep_thinking">正在深度思考…</string>
+
+    <string name="live_step_launching">正在開啟 %1$s</string>
+    <string name="live_step_tapping">正在點擊「%1$s」</string>
+    <string name="live_step_tapping_screen">正在點擊螢幕</string>
+    <string name="live_step_typing">正在輸入「%1$s」</string>
+    <string name="live_step_scrolling">正在滑動瀏覽</string>
+    <string name="live_step_waiting">正在等待頁面回應</string>
+    <string name="live_step_acting">正在操作螢幕</string>
+
+    <string name="live_voice_setup_lead">即時全雙工語音對話由 Google Gemini Live 原生音訊模型驅動。設定好 Gemini API Key、即時音訊模型與通話音色即可開啟對話。</string>
+    <string name="live_voice_connect_title">連接 Google Gemini</string>
+    <string name="live_voice_connect_save">連接並啟用</string>
+    <string name="live_voice_enable_save">儲存並啟用</string>
+    <string name="live_voice_disable">停用語音通話模型</string>
+    <string name="live_subtitle_idle_hint">直接開口說話，隨時可打斷</string>
 </resources>

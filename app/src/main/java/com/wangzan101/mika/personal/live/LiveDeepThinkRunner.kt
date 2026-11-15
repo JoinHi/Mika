@@ -21,6 +21,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -58,6 +61,8 @@ internal class LiveDeepThinkRunner(
 
     private val idSeq = AtomicInteger(0)
     private val active = ConcurrentHashMap<String, ActiveThink>()
+    private val _activeCount = MutableStateFlow(0)
+    val activeCount: StateFlow<Int> = _activeCount.asStateFlow()
 
     val hasActiveThinking: Boolean
         get() = active.isNotEmpty()
@@ -167,6 +172,7 @@ internal class LiveDeepThinkRunner(
         val items = active.values.toList()
         active.clear()
         items.forEach { it.job?.cancel() }
+        _activeCount.value = 0
         onStatusHint(null)
     }
 
@@ -174,6 +180,7 @@ internal class LiveDeepThinkRunner(
         if (step < MAX_REASONING_STEPS && webSearch.isSearchEnabled()) listOf(WEB_SEARCH_SPEC) else emptyList()
 
     private fun refreshStatusHint() {
+        _activeCount.value = active.size
         onStatusHint(if (active.isNotEmpty()) "正在深度思考…" else null)
     }
 

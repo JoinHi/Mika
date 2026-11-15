@@ -44,7 +44,6 @@ import com.wangzan101.mika.voice.WakeWordService
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.ArrayDeque
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.CopyOnWriteArrayList
@@ -100,10 +99,13 @@ data class PersonalLiveUiState(
     val phase: LiveSessionPhase = LiveSessionPhase.Idle,
     val muted: Boolean = false,
     val speaking: Boolean = false,
+    val thinking: Boolean = false,
     val inputLevel: Float = 0f,
     val outputLevel: Float = 0f,
     val liveUserTranscript: String = "",
     val liveAssistantTranscript: String = "",
+    val activeActivityText: String? = null,
+    val connectedAtElapsedMs: Long = 0L,
     val errorMessage: String? = null,
     val statusHint: String? = null,
     val activeTaskCount: Int = 0,
@@ -381,7 +383,7 @@ class PersonalLiveRuntime internal constructor(
         app = app,
         scope = scope,
         turnCoordinator = turnCoordinator,
-        onStatusHint = { hint -> _uiState.update { it.copy(statusHint = hint) } },
+        onStatusHint = {},
     )
 
     private val deepThinkRunner = LiveDeepThinkRunner(
@@ -389,7 +391,7 @@ class PersonalLiveRuntime internal constructor(
         scope = scope,
         webSearch = webSearchRunner,
         turnCoordinator = turnCoordinator,
-        onStatusHint = { hint -> _uiState.update { it.copy(statusHint = hint) } },
+        onStatusHint = {},
     )
 
     private val directPhone = LiveDirectPhoneController(
@@ -465,6 +467,9 @@ class PersonalLiveRuntime internal constructor(
     @Volatile private var currentSession: LiveRealtimeSession? = null
     @Volatile private var sessionJob: Job? = null
     @Volatile private var callResumeWatchJob: Job? = null
+    @Volatile private var subtitleClearJob: Job? = null
+    @Volatile private var userSpeechIdleJob: Job? = null
+    private val subtitleTurnSeq = AtomicLong(0L)
     @Volatile private var resumptionHandle: String? = null
     @Volatile private var resumptionHandleAtMs: Long = 0L
     @Volatile private var includeNonBlockingFlag: Boolean = false
@@ -488,6 +493,7 @@ class PersonalLiveRuntime internal constructor(
         onActiveDelivered = { clean ->
             markUserTurnPendingRecovery(clean)
             audioController.clearPlayback()
+            _uiState.update { it.copy(thinking = true, liveUserTranscript = clean, liveAssistantTranscript = "") }
         },
         onSendFailedMessage = { tr(R.string.live_error_connect_failed) },
         onSuspendedMessage = { tr(R.string.live_status_suspended_call) },
@@ -535,6 +541,20 @@ class PersonalLiveRuntime internal constructor(
         scope.launch {
             agent.state.map { s -> s.tasks.count { !it.terminal } }.distinctUntilChanged().collect { count ->
                 _uiState.update { it.copy(activeTaskCount = count) }
+            }
+        }
+
+        scope.launch {
+            combine(
+                directPhone.stepProgress,
+                directPhone.foregroundApp,
+                directPhone.activating,
+                webSearchRunner.activeCount,
+                deepThinkRunner.activeCount,
+            ) { step, appLabel, activating, searchingCount, thinkingCount ->
+                formatDirectStepActivity(step, appLabel, activating, searchingCount, thinkingCount)
+            }.distinctUntilChanged().collect { text ->
+                _uiState.update { it.copy(activeActivityText = text) }
             }
         }
 
@@ -594,6 +614,9 @@ class PersonalLiveRuntime internal constructor(
         audioFocusPreempted.value = false
         callResumeWatchJob?.cancel()
         callResumeWatchJob = null
+        cancelSubtitleClearJob()
+        userSpeechIdleJob?.cancel()
+        userSpeechIdleJob = null
         _retainedStage.value = null
         userTextDeliverer.clear()
         turnCoordinator.clear()
@@ -619,8 +642,10 @@ class PersonalLiveRuntime internal constructor(
                 phase = LiveSessionPhase.Connecting,
                 muted = false,
                 speaking = false,
+                thinking = false,
                 liveUserTranscript = "",
                 liveAssistantTranscript = "",
+                connectedAtElapsedMs = 0L,
                 errorMessage = null,
                 statusHint = null,
             )
@@ -635,6 +660,9 @@ class PersonalLiveRuntime internal constructor(
         sessionJob = null
         callResumeWatchJob?.cancel()
         callResumeWatchJob = null
+        cancelSubtitleClearJob()
+        userSpeechIdleJob?.cancel()
+        userSpeechIdleJob = null
         activeSessionScope?.cancel()
         activeSessionScope = null
         flushPendingTranscripts()
@@ -660,10 +688,12 @@ class PersonalLiveRuntime internal constructor(
                 phase = LiveSessionPhase.Idle,
                 muted = false,
                 speaking = false,
+                thinking = false,
                 inputLevel = 0f,
                 outputLevel = 0f,
                 liveUserTranscript = "",
                 liveAssistantTranscript = "",
+                connectedAtElapsedMs = 0L,
                 errorMessage = null,
                 statusHint = statusHint,
             )
@@ -721,11 +751,6 @@ class PersonalLiveRuntime internal constructor(
             is LiveConfirmationSource.Direct -> {
                 scope.launch {
                     val res = directPhone.approvePendingConfirmation(src.id) ?: return@launch
-                    if (res.ok || res.completedSteps > 0) {
-                        _uiState.update {
-                            it.copy(statusHint = tr(R.string.live_hint_direct_elapsed, res.completedSteps, formatSeconds(res.elapsedMs)))
-                        }
-                    }
                     val feedback = if (res.ok) {
                         "[系统事件·机主已在确认卡片上点击「同意」并完成了该步操作]\n执行回执：${res.payload.toString().take(900)}\n请结合最新画面简短自然地向机主反馈结果或继续下一步。"
                     } else {
@@ -810,6 +835,9 @@ class PersonalLiveRuntime internal constructor(
         suspendedLastCallId = app.calls.history.value.firstOrNull()?.id
         sessionJob?.cancel()
         sessionJob = null
+        cancelSubtitleClearJob()
+        userSpeechIdleJob?.cancel()
+        userSpeechIdleJob = null
         flushPendingTranscripts()
         runCatching { currentSession?.close() }
         currentSession = null
@@ -820,6 +848,7 @@ class PersonalLiveRuntime internal constructor(
             it.copy(
                 phase = LiveSessionPhase.SuspendedByCall,
                 speaking = false,
+                thinking = false,
                 inputLevel = 0f,
                 outputLevel = 0f,
                 liveUserTranscript = "",
@@ -981,7 +1010,13 @@ class PersonalLiveRuntime internal constructor(
                 val connectedAtMs = SystemClock.elapsedRealtime()
                 var hadSessionTraffic = false
                 touchInteraction()
-                _uiState.update { it.copy(phase = LiveSessionPhase.Active, errorMessage = null) }
+                _uiState.update {
+                    it.copy(
+                        phase = LiveSessionPhase.Active,
+                        connectedAtElapsedMs = if (it.connectedAtElapsedMs > 0L) it.connectedAtElapsedMs else connectedAtMs,
+                        errorMessage = null,
+                    )
+                }
 
                 userTextDeliverer.flushToConnectedSession(session)
 
@@ -1021,34 +1056,55 @@ class PersonalLiveRuntime internal constructor(
                                 session.close()
                             }
                             GeminiLiveEvent.Interrupted -> {
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
                                 turnCoordinator.onAssistantTurnBoundary()
                                 audioController.clearPlayback()
                                 clearCurrentTurnIntentState()
+                                _uiState.update { it.copy(thinking = false) }
                                 if (commitAssistantTurnIfAny() || consumeAssistantEmittedFlag()) {
                                     clearPendingTurnRecovery()
                                 }
+                                scheduleSubtitleClearAfterDrain(sessionScope)
                             }
                             is GeminiLiveEvent.InputTranscriptDelta -> {
                                 hadSessionTraffic = true
                                 touchInteraction()
+                                cancelSubtitleClearJob()
                                 turnCoordinator.onUserSpeechActivity()
                                 commitAssistantTurnIfAny()
                                 val snapshot = synchronized(this@PersonalLiveRuntime) {
                                     userTurnBuffer.append(event.text)
                                     userTurnBuffer.toString().trim()
                                 }
-                                _uiState.update { it.copy(liveUserTranscript = snapshot) }
+                                if (snapshot.isNotEmpty()) {
+                                    _uiState.update {
+                                        it.copy(
+                                            thinking = false,
+                                            liveUserTranscript = snapshot,
+                                            liveAssistantTranscript = if (!it.speaking) "" else it.liveAssistantTranscript,
+                                        )
+                                    }
+                                    scheduleUserSpeechThinkingHint(sessionScope)
+                                }
                             }
                             is GeminiLiveEvent.AudioDelta -> {
                                 hadSessionTraffic = true
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
+                                cancelSubtitleClearJob()
                                 markAssistantEmittedInTurn()
                                 touchInteraction()
                                 turnCoordinator.onAssistantActivity()
                                 commitUserTurnIfAny()
+                                _uiState.update { it.copy(thinking = false) }
                                 audioController.enqueueOutputPcm24k(event.pcm24kLe)
                             }
                             is GeminiLiveEvent.OutputTranscriptDelta -> {
                                 hadSessionTraffic = true
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
+                                cancelSubtitleClearJob()
                                 markAssistantEmittedInTurn()
                                 touchInteraction()
                                 turnCoordinator.onAssistantActivity()
@@ -1057,16 +1113,28 @@ class PersonalLiveRuntime internal constructor(
                                     assistantTurnBuffer.append(event.text)
                                     assistantTurnBuffer.toString().trim()
                                 }
-                                _uiState.update { it.copy(liveAssistantTranscript = snapshot) }
+                                if (snapshot.isNotEmpty()) {
+                                    _uiState.update {
+                                        it.copy(
+                                            thinking = false,
+                                            liveUserTranscript = "",
+                                            liveAssistantTranscript = snapshot,
+                                        )
+                                    }
+                                }
                             }
                             GeminiLiveEvent.TurnComplete -> {
                                 hadSessionTraffic = true
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
                                 turnCoordinator.onAssistantTurnBoundary()
                                 commitUserTurnIfAny()
                                 clearCurrentTurnIntentState()
+                                _uiState.update { it.copy(thinking = false) }
                                 if (commitAssistantTurnIfAny() || consumeAssistantEmittedFlag()) {
                                     clearPendingTurnRecovery()
                                 }
+                                scheduleSubtitleClearAfterDrain(sessionScope)
                             }
                             is GeminiLiveEvent.UsageReport -> {
                                 app.usage.record(
@@ -1093,8 +1161,11 @@ class PersonalLiveRuntime internal constructor(
                             }
                             is GeminiLiveEvent.ToolCalls -> {
                                 hadSessionTraffic = true
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
                                 touchInteraction()
                                 commitUserTurnIfAny()
+                                _uiState.update { it.copy(thinking = true) }
                                 val calls = event.calls
                                 if (calls.isNotEmpty()) {
                                     turnCoordinator.launchToolWork(
@@ -1274,10 +1345,7 @@ class PersonalLiveRuntime internal constructor(
                 for (done in newlyFinished) {
                     announcedTerminalIds += done.id
                     announcedWaitKeys.remove(done.id)
-                    delegatedTaskStartedAt.remove(done.id)?.let { startedAt ->
-                        val elapsedMs = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
-                        _uiState.update { it.copy(statusHint = tr(R.string.live_hint_task_turbo_elapsed, formatSeconds(elapsedMs))) }
-                    }
+                    delegatedTaskStartedAt.remove(done.id)
                     touchInteraction()
                     val outcome = done.result?.takeIf { it.isNotBlank() } ?: done.detail.ifBlank { done.status }
                     turnCoordinator.enqueue(
@@ -1334,11 +1402,6 @@ class PersonalLiveRuntime internal constructor(
                         preemptRunningPhoneTasks()
                     }
                     val res = directPhone.act(commands, callTag = call.id)
-                    if (res.completedSteps > 0 || res.ok) {
-                        _uiState.update {
-                            it.copy(statusHint = tr(R.string.live_hint_direct_elapsed, res.completedSteps, formatSeconds(res.elapsedMs)))
-                        }
-                    }
                     ExecutedToolStep(res.payload, null, deferredJpeg = res.jpegFrame)
                 }
                 PersonalLiveTools.WEB_SEARCH_NAME -> {
@@ -1387,9 +1450,6 @@ class PersonalLiveRuntime internal constructor(
                         )
                         val res = directPhone.act(commands, callTag = call.id)
                         if (res.completedSteps > 0 || res.ok) {
-                            _uiState.update {
-                                it.copy(statusHint = tr(R.string.live_hint_direct_elapsed, res.completedSteps, formatSeconds(res.elapsedMs)))
-                            }
                             ExecutedToolStep(res.payload, null, deferredJpeg = res.jpegFrame)
                         } else {
                             directPhone.release()
@@ -1648,7 +1708,6 @@ class PersonalLiveRuntime internal constructor(
             markUserTurnPendingRecovery(text)
             recordRecentUserQuote(text)
             agent.recordLiveMessage("user", text)
-            _uiState.update { it.copy(liveUserTranscript = "") }
         }
     }
 
@@ -1745,7 +1804,6 @@ class PersonalLiveRuntime internal constructor(
         }
         if (text.isNotEmpty()) {
             agent.recordLiveMessage("assistant", text)
-            _uiState.update { it.copy(liveAssistantTranscript = "") }
             return true
         }
         return false
@@ -1754,6 +1812,91 @@ class PersonalLiveRuntime internal constructor(
     private fun flushPendingTranscripts() {
         commitUserTurnIfAny()
         commitAssistantTurnIfAny()
+    }
+
+    private fun cancelSubtitleClearJob() {
+        subtitleTurnSeq.incrementAndGet()
+        subtitleClearJob?.cancel()
+        subtitleClearJob = null
+    }
+
+    private fun scheduleUserSpeechThinkingHint(sessionScope: CoroutineScope) {
+        userSpeechIdleJob?.cancel()
+        userSpeechIdleJob = sessionScope.launch {
+            delay(USER_SPEECH_PAUSE_TO_THINKING_MS)
+            val st = _uiState.value
+            if (st.phase == LiveSessionPhase.Active && !st.speaking && st.liveUserTranscript.isNotBlank()) {
+                _uiState.update {
+                    if (it.phase == LiveSessionPhase.Active && !it.speaking && it.liveUserTranscript.isNotBlank()) {
+                        it.copy(thinking = true)
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 播放排空门控（Playback Drain Gate）+ 3.5 秒余韵驻留：
+     * 服务端 `TurnComplete` 往往早于本地 24kHz PCM 缓冲播完；先等待 [audioController] 真正排空发声，
+     * 再额外驻留 [SUBTITLE_LINGER_MS]，确保机主永远来得及看清 Mika 最后一句话，绝不一闪而过。
+     */
+    private fun scheduleSubtitleClearAfterDrain(sessionScope: CoroutineScope) {
+        val seq = subtitleTurnSeq.incrementAndGet()
+        subtitleClearJob?.cancel()
+        subtitleClearJob = sessionScope.launch {
+            val waitStart = SystemClock.elapsedRealtime()
+            while (isActive && _uiState.value.speaking && SystemClock.elapsedRealtime() - waitStart < MAX_PLAYBACK_DRAIN_WAIT_MS) {
+                delay(80L)
+            }
+            delay(160L)
+            while (isActive && _uiState.value.speaking && SystemClock.elapsedRealtime() - waitStart < MAX_PLAYBACK_DRAIN_WAIT_MS) {
+                delay(80L)
+            }
+            delay(SUBTITLE_LINGER_MS)
+            if (isActive && subtitleTurnSeq.get() == seq) {
+                _uiState.update { it.copy(liveUserTranscript = "", liveAssistantTranscript = "") }
+            }
+        }
+    }
+
+    private fun formatDirectStepActivity(
+        step: LiveDirectPhoneController.DirectStepProgress?,
+        appLabel: String?,
+        activating: Boolean,
+        searchingCount: Int,
+        thinkingCount: Int,
+    ): String? {
+        if (step != null) {
+            val cleanTarget = step.target?.trim()?.take(14)
+            val actionText = when (step.op) {
+                "launch" -> tr(R.string.live_step_launching, cleanTarget ?: appLabel ?: "App")
+                "tap", "long_press" -> if (!cleanTarget.isNullOrBlank()) {
+                    tr(R.string.live_step_tapping, cleanTarget)
+                } else {
+                    tr(R.string.live_step_tapping_screen)
+                }
+                "type" -> if (!cleanTarget.isNullOrBlank()) {
+                    tr(R.string.live_step_typing, cleanTarget)
+                } else {
+                    tr(R.string.live_step_acting)
+                }
+                "scroll", "swipe" -> tr(R.string.live_step_scrolling)
+                "wait", "assert" -> tr(R.string.live_step_waiting)
+                else -> tr(R.string.live_step_acting)
+            }
+            val suffix = if (step.totalSteps > 1) " (${step.stepIndex}/${step.totalSteps})" else ""
+            val prefix = appLabel?.takeIf { it.isNotBlank() && step.op != "launch" }?.let { "$it · " }.orEmpty()
+            return "$prefix$actionText$suffix"
+        }
+        if (activating) {
+            val prefix = appLabel?.takeIf { it.isNotBlank() }?.let { "$it · " }.orEmpty()
+            return "$prefix${tr(R.string.live_step_acting)}"
+        }
+        if (searchingCount > 0) return tr(R.string.live_status_searching)
+        if (thinkingCount > 0) return tr(R.string.live_status_deep_thinking)
+        return null
     }
 
     private fun markUserTurnPendingRecovery(text: String) {
@@ -1833,6 +1976,9 @@ class PersonalLiveRuntime internal constructor(
         sessionJob = null
         callResumeWatchJob?.cancel()
         callResumeWatchJob = null
+        cancelSubtitleClearJob()
+        userSpeechIdleJob?.cancel()
+        userSpeechIdleJob = null
         activeSessionScope?.cancel()
         activeSessionScope = null
         flushPendingTranscripts()
@@ -1857,17 +2003,16 @@ class PersonalLiveRuntime internal constructor(
             it.copy(
                 phase = LiveSessionPhase.Error,
                 speaking = false,
+                thinking = false,
                 inputLevel = 0f,
                 outputLevel = 0f,
                 liveUserTranscript = "",
                 liveAssistantTranscript = "",
+                connectedAtElapsedMs = 0L,
                 errorMessage = message,
             )
         }
     }
-
-    private fun formatSeconds(elapsedMs: Long): String =
-        String.format(Locale.US, "%.1f", elapsedMs / 1000.0)
 
     companion object {
         private const val TAG = "MikaLive"
@@ -1875,5 +2020,8 @@ class PersonalLiveRuntime internal constructor(
         private const val STABLE_SESSION_MS = 8_000L
         private const val TOOL_FINISH_GRACE_MS = 3_500L
         private const val PHONE_TASK_PREEMPT_WAIT_MS = 3_000L
+        private const val USER_SPEECH_PAUSE_TO_THINKING_MS = 650L
+        private const val MAX_PLAYBACK_DRAIN_WAIT_MS = 15_000L
+        private const val SUBTITLE_LINGER_MS = 3_500L
     }
 }

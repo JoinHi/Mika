@@ -57,4 +57,30 @@
     <string name="live_stage_using_web">ブラウザ</string>
     <string name="live_stage_back">仮想画面で戻る</string>
     <string name="live_stage_snapshot_wake">画面休止中 · タップして操作を再開</string>
+
+    <string name="role_live_voice">音声通話モデル</string>
+    <string name="role_live_voice_what">リアルタイム音声通話</string>
+    <string name="role_live_voice_need_gemini">Google Gemini が必要</string>
+
+    <string name="live_in_call_label">対話中</string>
+    <string name="live_status_listening_ready">聞き取り中 · 話しかけてください</string>
+    <string name="live_status_thinking">Mika が考え中…</string>
+    <string name="live_status_needs_attention">画面での確認待ち</string>
+    <string name="live_status_searching">ウェブ検索中…</string>
+    <string name="live_status_deep_thinking">深く思考中…</string>
+
+    <string name="live_step_launching">%1$s を起動中</string>
+    <string name="live_step_tapping">「%1$s」をタップ中</string>
+    <string name="live_step_tapping_screen">画面をタップ中</string>
+    <string name="live_step_typing">「%1$s」を入力中</string>
+    <string name="live_step_scrolling">スクロール中</string>
+    <string name="live_step_waiting">画面の応答を待機中</string>
+    <string name="live_step_acting">画面を操作中</string>
+
+    <string name="live_voice_setup_lead">リアルタイム音声通話は Google Gemini Live ネイティブ音声モデルで動作します。Gemini API キー、音声モデル、通話ボイスを設定して開始してください。</string>
+    <string name="live_voice_connect_title">Google Gemini に接続</string>
+    <string name="live_voice_connect_save">接続して有効化</string>
+    <string name="live_voice_enable_save">保存して有効化</string>
+    <string name="live_voice_disable">音声通話モデルを無効化</string>
+    <string name="live_subtitle_idle_hint">いつでも話しかけ・割り込み可能</string>
 </resources>

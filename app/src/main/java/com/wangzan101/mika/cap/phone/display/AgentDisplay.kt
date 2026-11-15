@@ -27,7 +27,13 @@ class AgentDisplay(
     private val bufferHeight: Int,
     dpi: Int,
     private val displayManager: DisplayManager,
+    previewShortSide: Int = PREVIEW_SHORT_SIDE,
+    frameIntervalMs: Long = FRAME_INTERVAL_MS,
 ) {
+    private val basePreviewShortSide = previewShortSide
+    private val baseFrameIntervalMs = frameIntervalMs
+    @Volatile private var activePreviewShortSide: Int = previewShortSide
+    @Volatile private var activeFrameIntervalMs: Long = frameIntervalMs
     private val thread = HandlerThread("agent-display").apply { start() }
     private val handler = Handler(thread.looper)
     private val reader = ImageReader.newInstance(bufferWidth, bufferHeight, PixelFormat.RGBA_8888, 2)
@@ -82,8 +88,23 @@ class AgentDisplay(
     private fun schedule() {
         if (pending || released) return
         pending = true
-        val wait = lastProcessedAt + FRAME_INTERVAL_MS - SystemClock.uptimeMillis()
+        val wait = lastProcessedAt + activeFrameIntervalMs - SystemClock.uptimeMillis()
         if (wait > 0) handler.postDelayed(process, wait) else handler.post(process)
+    }
+
+    /**
+     * 动态切换交互高刷模式(720p @ ~30fps)与后台省电档:
+     * 用户展开小窗直接操控或停留在语音专属大屏可触控态时升至高帧率,退出后立即回落到基础档。
+     */
+    fun setInteractiveQuality(interactive: Boolean) {
+        val nextShortSide = if (interactive) maxOf(basePreviewShortSide, INTERACTIVE_SHORT_SIDE) else basePreviewShortSide
+        val nextInterval = if (interactive) minOf(baseFrameIntervalMs, INTERACTIVE_FRAME_INTERVAL_MS) else baseFrameIntervalMs
+        val upgraded = nextShortSide > activePreviewShortSide || nextInterval < activeFrameIntervalMs
+        activePreviewShortSide = nextShortSide
+        activeFrameIntervalMs = nextInterval
+        if (upgraded && !released) {
+            handler.post { refreshPreviewFrame() }
+        }
     }
 
     private fun processLatest() {
@@ -111,7 +132,7 @@ class AgentDisplay(
                 // 限速或线程调度会延后消费，不能把复制位图的时刻记成帧时刻。
                 frameTimestampNanos = image.timestamp
                 frameGeometry = capturedGeometry
-                _frames.value = uprightDisplayFrame(bmp, capturedGeometry, capturedGeometry.previewWidth(PREVIEW_SHORT_SIDE), paint)
+                _frames.value = uprightDisplayFrame(bmp, capturedGeometry, capturedGeometry.previewWidth(activePreviewShortSide), paint)
             }
         } finally {
             image.close()
@@ -139,6 +160,18 @@ class AgentDisplay(
         if (!hasFrame || bmp == null) null else uprightDisplayFrame(bmp, frameGeometry, paint = paint)
     }
 
+    /**
+     * 当静态页面未继续触发 ImageReader 新帧回调、或预览因窗口门禁切换需要重发最新画面时，
+     * 直接从缓存整帧重新生成并发布缩略预览帧。
+     */
+    fun refreshPreviewFrame(): Bitmap? = synchronized(frameLock) {
+        val bmp = fullFrame
+        if (released || !hasFrame || bmp == null) return null
+        uprightDisplayFrame(bmp, frameGeometry, frameGeometry.previewWidth(activePreviewShortSide), paint).also {
+            _frames.value = it
+        }
+    }
+
     fun release() {
         if (released) return
         released = true
@@ -162,9 +195,13 @@ class AgentDisplay(
         thread.quitSafely()
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "AgentDisplay"
         const val PREVIEW_SHORT_SIDE = 360
         const val FRAME_INTERVAL_MS = 100L
+        const val LIVE_PREVIEW_SHORT_SIDE = 720
+        const val LIVE_FRAME_INTERVAL_MS = 66L
+        const val INTERACTIVE_SHORT_SIDE = 720
+        const val INTERACTIVE_FRAME_INTERVAL_MS = 33L
     }
 }

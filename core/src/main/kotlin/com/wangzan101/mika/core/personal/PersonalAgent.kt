@@ -116,6 +116,86 @@ class PersonalAgent(
         wake.trySend(Unit)
     }
 
+    /** Records a completed turn from an active Mika Live voice session without waking the text ChatModel. */
+    fun recordLiveMessage(role: String, text: String): PersonalMessage? {
+        if (role != "user" && role != "assistant") {
+            throw PersonalSystemException("invalid_live_role", "不支持的语音消息角色：$role")
+        }
+        val clean = (if (role == "assistant") stripReplyMetadata(text) else text).trim()
+        if (clean.isEmpty()) return null
+        val msg = entry(role, clean.take(30_000), handled = true)
+        store.update { it.copy(messages = it.messages + msg) }
+        return msg
+    }
+
+    fun startLiveTask(title: String, goal: String, sourceId: String? = null): PersonalTask {
+        val cleanGoal = goal.trim()
+        if (cleanGoal.isBlank() || cleanGoal.length > 12_000) {
+            throw PersonalSystemException("invalid_goal", "任务目标不能为空或过长。")
+        }
+        val cleanTitle = title.trim().ifBlank { cleanGoal.take(36) }.take(80)
+        var existing: PersonalTask? = null
+        lateinit var created: PersonalTask
+        store.update { s ->
+            val resolvedSourceId = sourceId ?: s.messages.lastOrNull { it.role == "user" }?.id ?: "live"
+            val dup = s.tasks.find {
+                it.goal == cleanGoal && (!it.terminal || (resolvedSourceId != "live" && it.sourceId == resolvedSourceId))
+            }
+            if (dup != null) {
+                existing = dup
+                s
+            } else {
+                existing = null
+                created = PersonalTask(ids(), ids(), cleanTitle, cleanGoal, resolvedSourceId, clock())
+                s.copy(tasks = s.tasks + created, messages = s.messages + entry("task", created.title, created.id))
+            }
+        }
+        existing?.let { return it }
+        try {
+            actions.start(created.conversationId, cleanGoal)
+        } catch (e: Exception) {
+            updateTask(created.id, "failed", result = e.message ?: "任务启动失败", resultSystemType = if (e.message == null) "task_start_failed" else null)
+            throw e
+        }
+        return created
+    }
+
+    fun reviseLiveTask(taskId: String, instruction: String): String {
+        val task = state.value.tasks.find { it.id == taskId.trim() }
+            ?: throw PersonalSystemException("task_not_found", "找不到这项个人助手任务。")
+        if (task.terminal) {
+            throw PersonalSystemException("task_terminal", "这项任务已经结束，需要继续时请创建新任务。")
+        }
+        val clean = instruction.trim()
+        if (clean.isBlank()) {
+            throw PersonalSystemException("empty_instruction", "补充说明不能为空。")
+        }
+        val result = actions.revise(task.conversationId, clean)
+        store.update { s -> s.copy(tasks = s.tasks.map { if (it.id == task.id) it.copy(detail = "补充：" + clean, detailSystemType = "task_amendment") else it }) }
+        return result
+    }
+
+    fun cancelLiveTask(taskId: String): String {
+        val task = state.value.tasks.find { it.id == taskId.trim() }
+            ?: throw PersonalSystemException("task_not_found", "找不到这项个人助手任务。")
+        return if (task.terminal) "任务已经结束。" else actions.cancel(task.conversationId)
+    }
+
+    fun rememberFromLive(text: String, quote: String): String = actions.remember(text.trim(), quote)
+
+    fun recallHistoryFromLive(query: String): String {
+        val clean = query.trim()
+        if (clean.isBlank()) {
+            throw PersonalSystemException("empty_query", "查询关键词不能为空。")
+        }
+        val found = state.value.messages.filter { it.role != "task" && it.conversationText().contains(clean, ignoreCase = true) }.takeLast(12)
+        return found.joinToString("\n") {
+            it.at.toString() + " " + timestamp(it.at) + " " + it.role + ": " + it.conversationText().take(2000)
+        }.take(18_000)
+    }
+
+    fun memorySnapshot(): String = actions.memory()
+
     private fun timestamp(at: Long) = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toString()
 
     private fun entry(role: String, text: String, task: String? = null, handled: Boolean = true, error: Boolean = false, systemType: String? = null) =
@@ -336,6 +416,7 @@ class PersonalAgent(
         }
 
     companion object {
+        const val MAIN_CONVERSATION_ID = "personal-main"
         private const val HISTORY_LIMIT = 40
 
         fun jsonResult(key: String, value: String) = buildJsonObject { put(key, value) }.toString()

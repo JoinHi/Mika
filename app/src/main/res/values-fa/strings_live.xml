@@ -1,0 +1,69 @@
+<resources>
+    <string name="live_channel_name">گفتگوی صوتی Mika Live</string>
+    <string name="live_channel_desc">حفظ مکالمه صوتی بلادرنگ هنگام جابه‌جایی بین برنامه‌ها و قفل صفحه</string>
+    <string name="live_notification_title">Mika Live</string>
+    <string name="live_capsule_title">Mika Live</string>
+    <string name="live_entry_button">زنده</string>
+    <string name="live_entry_active">در حال مکالمه</string>
+
+    <string name="live_status_connecting">در حال اتصال…</string>
+    <string name="live_status_reconnecting">در حال اتصال مجدد…</string>
+    <string name="live_status_suspended_call">موقتاً به‌خاطر تماس تلفنی متوقف شد</string>
+    <string name="live_status_muted">بی‌صدا</string>
+    <string name="live_status_speaking">در حال صحبت</string>
+    <string name="live_status_listening">در حال گوش دادن</string>
+    <string name="live_status_listening_tasks">در حال گوش دادن · %1$d کار فعال</string>
+
+    <string name="live_action_mute">بی‌صدا</string>
+    <string name="live_action_unmute">وصل صدا</string>
+    <string name="live_action_hangup">پایان</string>
+    <string name="live_action_share_screen">اشتراک صفحه فعلی</string>
+    <string name="live_action_type_message">تایپ پیام</string>
+    <string name="live_action_back_to_voice">نوار صوتی</string>
+    <string name="live_action_settings">تنظیمات صدا</string>
+
+    <string name="live_you_prefix">شما: %1$s</string>
+    <string name="live_mika_prefix">Mika: %1$s</string>
+
+    <string name="live_settings_title">صدای زنده Mika Live</string>
+    <string name="live_settings_subtitle">گفتگوی صوتی دوطرفه بلادرنگ همراه با کنترل گوشی با Gemini Live</string>
+    <string name="live_settings_provider_label">ارائه‌دهنده Gemini</string>
+    <string name="live_settings_no_gemini_body">هنوز هیچ ارائه‌دهنده Gemini با کلید API تنظیم نشده است. ابتدا در تنظیمات مدل‌ها کلید Gemini API را اضافه کنید.</string>
+    <string name="live_settings_open_models">باز کردن تنظیمات مدل‌ها</string>
+    <string name="live_settings_voice_label">صدای سخنگو</string>
+    <string name="live_settings_model_label">مدل صوتی زنده</string>
+    <string name="live_settings_refresh_models">نوسازی</string>
+    <string name="live_settings_start_now">شروع Mika Live</string>
+    <string name="live_settings_reconnect_apply">اتصال مجدد و اعمال</string>
+
+    <string name="live_error_mic_permission">برای گفتگوی صوتی Mika Live مجوز میکروفون لازم است.</string>
+    <string name="live_error_no_gemini_key">لطفاً ابتدا یک کلید Gemini API در تنظیمات مدل‌ها وارد کنید.</string>
+    <string name="live_error_in_carrier_call">هنگام برقراری تماس تلفنی نمی‌توان Mika Live را آغاز کرد.</string>
+    <string name="live_error_connect_failed">اتصال به Gemini Live ناموفق بود. کلید API و شبکه را بررسی کنید.</string>
+    <string name="live_error_audio_init">راه‌اندازی صدای دوطرفه ممکن نشد. شاید برنامه دیگری میکروفون را اشغال کرده باشد.</string>
+    <string name="live_screen_unavailable">ابتدا به برنامه دیگری بروید و دسترسی‌پذیری و مجوز اشتراک صفحه را بررسی کنید.</string>
+    <string name="live_hint_idle_hangup">پس از ۳ دقیقه سکوت بدون کار فعال، Mika Live به‌طور خودکار پایان یافت.</string>
+
+    <string name="live_hint_turbo_on">⚡ حالت سریع فعال شد (حذف مکث‌ها + کنترل صوتی مستقیم)</string>
+    <string name="live_hint_turbo_off">حالت استاندارد مقایسه فعال شد (مکث عادی + کار پس‌زمینه)</string>
+    <string name="live_hint_direct_elapsed">⚡ کنترل مستقیم · %1$d گام در %2$s ثانیه</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ کار سریع در %1$s ثانیه انجام شد</string>
+    <string name="live_hint_task_standard_elapsed">حالت استاندارد در %1$s ثانیه انجام شد</string>
+    <string name="live_mode_turbo_badge">سریع</string>
+    <string name="live_mode_standard_badge">استاندارد</string>
+    <string name="live_mode_turbo_summary">بدون مکث اضافه · کنترل مستقیم صوتی</string>
+    <string name="live_mode_standard_summary">مکث استاندارد · مقایسه با پس‌زمینه</string>
+    <string name="live_settings_turbo_title">حالت کنترل سریع (کلید مقایسه)</string>
+    <string name="live_settings_turbo_desc">با روشن بودن، مکث‌ها و انتظارهای اضافی در حالت صوتی حذف شده و کنترل مستقیم گوشی با Gemini Live فعال می‌شود. برای مقایسه با حالت استاندارد خاموش کنید.</string>
+
+    <string name="live_stage_idle_title">صفحه مجازی زنده آماده است</string>
+    <string name="live_stage_idle_body">برنامه یا کار موردنظر را به Mika بگویید تا تصویر زنده در اینجا با بیشترین اندازه نمایش داده شود</string>
+    <string name="live_stage_preparing">در حال راه‌اندازی صفحه مجازی زنده…</string>
+    <string name="live_stage_touch_on">لمس</string>
+    <string name="live_stage_touch_off">بزرگ‌نمایی</string>
+    <string name="live_stage_view_chat">گفتگو</string>
+    <string name="live_stage_view_screen">صفحه زنده</string>
+    <string name="live_stage_using_web">مرورگر وب</string>
+    <string name="live_stage_back">بازگشت صفحه مجازی</string>
+    <string name="live_stage_snapshot_wake">صفحه متوقف شده است · برای ادامه ضربه بزنید</string>
+</resources>

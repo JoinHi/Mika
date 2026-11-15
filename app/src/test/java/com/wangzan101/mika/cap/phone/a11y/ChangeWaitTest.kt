@@ -18,13 +18,18 @@ class ChangeWaitTest {
         val treeChangedAt: Long = Long.MAX_VALUE,
     ) {
         var now = 0L
-        suspend fun run(before: IntArray?, fallback: (suspend () -> Boolean)? = null) = ChangeWait.awaitStableChange(
+        suspend fun run(
+            before: IntArray?,
+            profile: PhoneWaitProfile = PhoneWaitProfile.STANDARD,
+            fallback: (suspend () -> Boolean)? = null,
+        ) = ChangeWait.awaitStableChange(
             now = { now },
             sleep = { now += it },
             frame = { frameAt(now) },
             quietForMs = { now - lastEventAt(now) },
             treeChanged = { now >= treeChangedAt },
             beforeFrame = before,
+            profile = profile,
             fallback = fallback,
         )
     }
@@ -136,5 +141,24 @@ class ChangeWaitTest {
         val noTarget = Fake(frameAt = { before })
         assertFalse(noTarget.run(before) { false })
         assertTrue("ended at ${noTarget.now}", noTarget.now in ChangeWait.CAP_MS..(ChangeWait.CAP_MS + ChangeWait.POLL_MS))
+    }
+
+    @Test fun turboProfileSettlesAndCapsSignificantlyFasterThanStandard() = runTest {
+        val stdChange = Fake(frameAt = { t -> if (t < 100) before else after }, lastEventAt = { t -> minOf(t, 100) }, treeChangedAt = 50)
+        val turboChange = Fake(frameAt = { t -> if (t < 100) before else after }, lastEventAt = { t -> minOf(t, 100) }, treeChangedAt = 50)
+        assertTrue(stdChange.run(before, PhoneWaitProfile.STANDARD))
+        assertTrue(turboChange.run(before, PhoneWaitProfile.TURBO))
+        assertTrue(
+            "turbo settled at ${turboChange.now} vs standard ${stdChange.now}",
+            turboChange.now in (100 + PhoneWaitProfile.TURBO.changeQuietMs)..(100 + PhoneWaitProfile.TURBO.changeQuietMs + PhoneWaitProfile.TURBO.changePollMs),
+        )
+        assertTrue(turboChange.now + 200 <= stdChange.now)
+
+        val stdNoop = Fake(frameAt = { before })
+        val turboNoop = Fake(frameAt = { before })
+        assertFalse(stdNoop.run(before, PhoneWaitProfile.STANDARD))
+        assertFalse(turboNoop.run(before, PhoneWaitProfile.TURBO))
+        assertTrue("turbo cap ${turboNoop.now}", turboNoop.now in PhoneWaitProfile.TURBO.changeCapMs..(PhoneWaitProfile.TURBO.changeCapMs + PhoneWaitProfile.TURBO.changePollMs))
+        assertTrue(turboNoop.now * 2 < stdNoop.now)
     }
 }

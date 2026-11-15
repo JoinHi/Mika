@@ -18,8 +18,24 @@ class ResourceScheduler(
     private val apps = HashMap<String, String>()
     /** 正在等别的任务放开 App 的任务 → 它等的那个 App。 */
     private val waiting = HashMap<String, String>()
+    /** 不在 TaskCenter 队列里的进程内占用方(如 Live 直控热会话)→ 是否仍活跃。 */
+    private val externalOwners = HashMap<String, () -> Boolean>()
     /** 有任务放开了它占着的 App 就加一:等着的任务据此马上再看一眼,不用等到下一次轮询。 */
     private val released = MutableStateFlow(0L)
+
+    @Synchronized
+    fun registerExternalOwner(owner: String, active: () -> Boolean) {
+        externalOwners[owner] = active
+    }
+
+    @Synchronized
+    fun unregisterExternalOwner(owner: String) {
+        externalOwners.remove(owner)
+        releaseOwner(owner)
+    }
+
+    private fun isHolderActive(holder: String, holderActive: (String) -> Boolean): Boolean =
+        holderActive(holder) || externalOwners[holder]?.invoke() == true
 
     /** 占用与检查在同一把锁里；App 已被另一任务释放或关闭时允许接管。 */
     @Synchronized
@@ -33,7 +49,7 @@ class ResourceScheduler(
     @Synchronized
     fun appFree(packageName: String, owner: String, holderActive: (String) -> Boolean, stillUsed: () -> Boolean): Boolean {
         val holder = apps[packageName]
-        return holder == null || holder == owner || !holderActive(holder) || !stillUsed()
+        return holder == null || holder == owner || !isHolderActive(holder, holderActive) || !stillUsed()
     }
 
     @Synchronized fun releaseOwner(owner: String) {
@@ -81,7 +97,7 @@ class ResourceScheduler(
 
     /** 从 [packageName] 的占用者起,顺着「它在等谁手里的 App」往下找,绕回 [owner] 就是互相等。 */
     private fun wouldDeadlock(owner: String, packageName: String, holderActive: (String) -> Boolean): Boolean {
-        fun holderOf(pkg: String) = apps[pkg]?.takeIf(holderActive)
+        fun holderOf(pkg: String) = apps[pkg]?.takeIf { isHolderActive(it, holderActive) }
         var holder = holderOf(packageName)?.takeIf { it != owner } ?: return false
         val seen = HashSet<String>()
         while (seen.add(holder)) {

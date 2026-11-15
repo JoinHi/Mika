@@ -2,34 +2,40 @@ package com.wangzan101.mika.personal
 
 import android.graphics.Bitmap
 import android.util.AtomicFile
+import android.view.MotionEvent
 import com.wangzan101.mika.MikaApp
+import com.wangzan101.mika.cap.phone.display.PipInput
 import com.wangzan101.mika.capsule.previewFrames
 import com.wangzan101.mika.capsule.sameFrame
+import com.wangzan101.mika.confirm.ConfirmationNotifier
 import com.wangzan101.mika.core.agent.TaskState
 import com.wangzan101.mika.core.memory.*
-import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.core.model.ModelSession
 import com.wangzan101.mika.core.personal.*
 import com.wangzan101.mika.core.run.RunPhase
+import com.wangzan101.mika.personal.live.LiveConfirmationPrompt
+import com.wangzan101.mika.personal.live.LiveConfirmationSource
+import com.wangzan101.mika.personal.live.LiveUserTouchCoordinator
+import com.wangzan101.mika.personal.live.PersonalLiveRuntime
 import com.wangzan101.mika.takeover.Takeover
 import com.wangzan101.mika.task.TaskRun
 import com.wangzan101.mika.task.TaskService
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.io.ByteArrayOutputStream
-import java.io.File
-import java.util.UUID
 
 class FilePersonalStore(file: File) : PersonalStore {
     private val atomic = AtomicFile(file)
@@ -62,6 +68,18 @@ class FilePersonalStore(file: File) : PersonalStore {
 }
 
 internal data class PersonalPhonePreview(val conversationId: String, val frame: Bitmap)
+
+internal data class LiveScreenStageState(
+    val conversationId: String? = null,
+    val frame: Bitmap? = null,
+    val pipInput: PipInput? = null,
+    val appLabel: String? = null,
+    val webContent: Boolean = false,
+    val isPreparing: Boolean = false,
+    val needsAttention: Boolean = false,
+    val actionSeq: Long = 0L,
+    val isRetainedSnapshot: Boolean = false,
+)
 
 /** Process-owned chat coordinator; execution/approvals/recovery remain with TaskService. */
 class PersonalRuntime(private val app: MikaApp) {
@@ -97,6 +115,7 @@ class PersonalRuntime(private val app: MikaApp) {
         }
     }
     val agent = PersonalAgent(store, scope, { app.tasks.modelFactory(app, ModelSession.of("personal-main")) }, actions)
+    val live = PersonalLiveRuntime(app, agent)
     private val _error = MutableStateFlow<Throwable?>(null)
     val error = _error.asStateFlow()
     fun clearError() { _error.value = null }
@@ -104,12 +123,202 @@ class PersonalRuntime(private val app: MikaApp) {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     internal fun phonePreview(conversationIds: List<String>) = app.taskState.runs.flatMapLatest { runs ->
-        val sources = conversationIds.mapNotNull { id ->
+        val taskSources = conversationIds.mapNotNull { id ->
             runs.firstOrNull { it.conversationId == id }?.phoneFrames?.map { frame ->
                 frame?.let { PersonalPhonePreview(id, it) }
             }
         }
-        if (sources.isEmpty()) flowOf(null) else combine(sources) { previews -> previews.firstOrNull { it != null } }
+        val directSource = live.directPhonePreview.map { frame ->
+            frame?.let { PersonalPhonePreview(PersonalAgent.MAIN_CONVERSATION_ID, it) }
+        }
+        val sources = listOf(directSource) + taskSources
+        combine(sources) { previews -> previews.firstOrNull { it != null } }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    internal fun livePendingConfirmation(conversationIds: List<String>): Flow<LiveConfirmationPrompt?> =
+        app.taskState.runs.flatMapLatest { runs ->
+            val directFlow = live.directPendingConfirmation.map { pending ->
+                pending?.let {
+                    LiveConfirmationPrompt(
+                        source = LiveConfirmationSource.Direct(it.id),
+                        request = it.request,
+                        appLabel = it.appLabel,
+                    )
+                }
+            }
+            val taskFlows = conversationIds.mapNotNull { convId ->
+                val run = runs.firstOrNull { it.conversationId == convId } ?: return@mapNotNull null
+                run.state.map { rs ->
+                    val waiting = rs as? TaskState.WaitingConfirmation ?: return@map null
+                    val taskId = state.value.tasks.firstOrNull { it.conversationId == convId }?.id ?: convId
+                    LiveConfirmationPrompt(
+                        source = LiveConfirmationSource.Task(
+                            runKey = run.key,
+                            requestKey = ConfirmationNotifier.requestKey(waiting),
+                            taskId = taskId,
+                        ),
+                        request = waiting.request,
+                        appLabel = ConfirmationNotifier.appLabel(app, waiting.request.app),
+                    )
+                }
+            }
+            combine(listOf(directFlow) + taskFlows) { prompts -> prompts.firstOrNull { it != null } }
+        }
+
+    private suspend fun captureTaskGuidance(run: TaskRun): LiveUserTouchCoordinator.CapturedGuidanceState? {
+        val raw = run.captureStageGuidance() ?: return null
+        val summary = LiveUserTouchCoordinator.summarizeSnapshot(raw.snapshot)
+        val jpeg = live.encodeGuidanceJpeg(raw.frame)
+        if (summary.isBlank() && jpeg == null) return null
+        return LiveUserTouchCoordinator.CapturedGuidanceState(
+            appLabel = raw.appLabel,
+            screenSummary = summary,
+            jpegFrame = jpeg,
+        )
+    }
+
+    private fun wrapTaskStagePipInput(run: TaskRun, base: PipInput): PipInput = object : PipInput {
+        override fun onInteractiveChanged(interactive: Boolean) {
+            base.onInteractiveChanged(interactive)
+        }
+
+        override fun injectTouch(
+            action: Int,
+            downTime: Long,
+            eventTime: Long,
+            pointerIds: IntArray,
+            normXs: FloatArray,
+            normYs: FloatArray,
+        ): Boolean {
+            val ok = base.injectTouch(action, downTime, eventTime, pointerIds, normXs, normYs)
+            if (ok && live.isSessionActive) {
+                live.onTaskStageTouchMotion(
+                    maskedAction = action and MotionEvent.ACTION_MASK,
+                    pauseDuringGesture = { run.setStageTouchHold(true) },
+                    resumeAfterGesture = { run.setStageTouchHold(false) },
+                    captureAfterSettle = { captureTaskGuidance(run) },
+                )
+            }
+            return ok
+        }
+
+        override suspend fun tap(fx: Float, fy: Float) {
+            base.tap(fx, fy)
+            if (live.isSessionActive) {
+                live.onTaskStageDiscreteTouch(
+                    pauseDuringGesture = { run.setStageTouchHold(true) },
+                    resumeAfterGesture = { run.setStageTouchHold(false) },
+                    captureAfterSettle = { captureTaskGuidance(run) },
+                )
+            }
+        }
+
+        override suspend fun swipe(points: List<Pair<Float, Float>>, durationMs: Long) {
+            base.swipe(points, durationMs)
+            if (live.isSessionActive) {
+                live.onTaskStageDiscreteTouch(
+                    pauseDuringGesture = { run.setStageTouchHold(true) },
+                    resumeAfterGesture = { run.setStageTouchHold(false) },
+                    captureAfterSettle = { captureTaskGuidance(run) },
+                )
+            }
+        }
+
+        override suspend fun back() {
+            base.back()
+            if (live.isSessionActive) {
+                live.onTaskStageDiscreteTouch(
+                    pauseDuringGesture = { run.setStageTouchHold(true) },
+                    resumeAfterGesture = { run.setStageTouchHold(false) },
+                    captureAfterSettle = { captureTaskGuidance(run) },
+                )
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    internal fun liveScreenStage(conversationIds: List<String>) = app.taskState.runs.flatMapLatest { runs ->
+        val actionSeqFlow = combine(live.directPhoneActionSeq, live.taskActionSeq) { d, t -> d + t }
+        val directStage = combine(
+            live.directPhonePreview,
+            live.directPhonePipInput,
+            live.directPhoneApp,
+            live.directPhoneActivating,
+            live.directPendingConfirmation,
+        ) { frame, input, label, activating, pendingConfirm ->
+            val validFrame = frame?.takeUnless { it.isRecycled }
+            if (validFrame != null) live.rememberStageFrame(validFrame, label, live.directPhonePackage.value)
+            LiveScreenStageState(
+                conversationId = PersonalAgent.MAIN_CONVERSATION_ID.takeIf { validFrame != null || activating },
+                frame = validFrame,
+                pipInput = input.takeIf { validFrame != null },
+                appLabel = label,
+                webContent = false,
+                isPreparing = activating && validFrame == null,
+                needsAttention = pendingConfirm != null,
+            )
+        }
+        val taskStages = conversationIds.mapNotNull { id ->
+            val run = runs.firstOrNull { it.conversationId == id } ?: return@mapNotNull null
+            // Cache wrapped PipInput per (run, baseInput) so 30fps frame updates never recreate PipInput and cancel active pointer gestures.
+            var cachedBaseInput: PipInput? = null
+            var cachedWrappedInput: PipInput? = null
+            combine(
+                run.phoneFrames,
+                run.frames,
+                run.webOpen,
+                run.pipInput,
+                run.state,
+            ) { phoneFrame, anyFrame, web, input, taskState ->
+                val effectiveFrame = (if (web) anyFrame else phoneFrame)?.takeUnless { it.isRecycled }
+                val taskTitle = state.value.tasks.firstOrNull { it.conversationId == id }?.title
+                if (effectiveFrame != null) live.rememberStageFrame(effectiveFrame, taskTitle)
+                val attention = taskState is TaskState.WaitingConfirmation ||
+                    taskState is TaskState.WaitingInput ||
+                    taskState is TaskState.WaitingTakeover ||
+                    (taskState is TaskState.Held && taskState.reason.needsYou)
+                val wrappedInput = if (web || effectiveFrame == null || input == null) {
+                    null
+                } else {
+                    if (cachedBaseInput !== input || cachedWrappedInput == null) {
+                        cachedBaseInput = input
+                        cachedWrappedInput = wrapTaskStagePipInput(run, input)
+                    }
+                    cachedWrappedInput
+                }
+                LiveScreenStageState(
+                    conversationId = id,
+                    frame = effectiveFrame,
+                    pipInput = wrappedInput,
+                    appLabel = taskTitle,
+                    webContent = web,
+                    isPreparing = effectiveFrame == null && taskState !is TaskState.Terminal,
+                    needsAttention = attention,
+                )
+            }
+        }
+        val mergedLive = combine(listOf(directStage) + taskStages) { stages ->
+            stages.firstOrNull { it.frame != null }
+                ?: stages.firstOrNull { it.isPreparing }
+        }
+        combine(mergedLive, live.retainedStage, actionSeqFlow) { activeStage, retained, seq ->
+            when {
+                activeStage != null -> activeStage.copy(actionSeq = seq)
+                live.isSessionActive && retained != null && !retained.frame.isRecycled -> LiveScreenStageState(
+                    conversationId = null,
+                    frame = retained.frame,
+                    pipInput = null,
+                    appLabel = retained.appLabel,
+                    webContent = false,
+                    isPreparing = false,
+                    needsAttention = false,
+                    actionSeq = seq,
+                    isRetainedSnapshot = true,
+                )
+                else -> LiveScreenStageState(actionSeq = seq)
+            }
+        }
     }
 
     internal suspend fun replayFrames(conversationId: String) = withContext(Dispatchers.IO) {
@@ -152,8 +361,17 @@ class PersonalRuntime(private val app: MikaApp) {
             replays.end(id)
         }
     }
+
     private val submit = Mutex()
-    suspend fun send(text: String) = submit.withLock { withContext(Dispatchers.IO) { agent.send(text) } }
+
+    suspend fun send(text: String) = submit.withLock {
+        if (live.isSessionActive) {
+            live.deliverUserText(text)
+            return@withLock
+        }
+        withContext(Dispatchers.IO) { agent.send(text) }
+    }
+
     fun stop(id: String) {
         scope.launch {
             runCatching {

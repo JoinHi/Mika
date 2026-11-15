@@ -15,6 +15,7 @@ import com.wangzan101.mika.core.usage.RunUsageTally
 import com.wangzan101.mika.core.shell.AccessibilityRepair
 import com.wangzan101.mika.core.shell.HelperRestart
 import com.wangzan101.mika.ui.StatusCopy
+import com.wangzan101.mika.ui.scaleTouchToDisplay
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
 import com.wangzan101.mika.cap.sandbox.SandboxState
 import com.wangzan101.mika.cap.sandbox.AndroidSandbox
@@ -318,6 +319,16 @@ class TaskRun(
         internal set
     /** 已接上的手机侧;浮层恢复声音据此找到当前目标 App,收尾时清空。 */
     @Volatile private var phone: PhoneSide? = null
+    /** 外部实时触控手势进行中时暂缓下一步手机写动作,手势收尾即放开,不改动 TaskGate 的人工恢复计数。 */
+    private val stageTouchHold = MutableStateFlow(false)
+    internal data class StageGuidanceFrame(
+        val appLabel: String?,
+        val snapshot: com.wangzan101.mika.core.uistate.ScreenSnapshot?,
+        val frame: Bitmap?,
+    )
+    @Volatile private var stageGuidanceReader: (suspend () -> StageGuidanceFrame?)? = null
+    internal fun setStageTouchHold(held: Boolean) { stageTouchHold.value = held }
+    internal suspend fun captureStageGuidance(): StageGuidanceFrame? = stageGuidanceReader?.invoke()
     /** 发布与收尾互斥;[ended] 之后不再写状态,迟到的发布不能盖掉终态或重新拿锁。 */
     private val publishLock = Any()
     private var ended = false
@@ -610,6 +621,8 @@ class TaskRun(
             }
         }
         phone = null
+        stageGuidanceReader = null
+        stageTouchHold.value = false
         // 屏释放后、对外报结束前清掉:界面看到任务结束时已经没有屏了
         _displayId.value = -1
         _pipInput.value = null
@@ -740,7 +753,18 @@ class TaskRun(
                         create()
                     }.also { d ->
                         _displayId.value = d.displayId
-                        _pipInput.value = PipInputImpl(shell, d)
+                        _pipInput.value = PipInputImpl(shell, d) { states.locked.value }
+                        stageGuidanceReader = {
+                            withContext(Dispatchers.IO) {
+                                runCatching { phone?.screen?.waitStable(600L) }
+                                if (!previewAllowed()) return@withContext null
+                                val snap = runCatching { accessGuard?.peek() }.getOrNull()
+                                val pkg = snap?.packageName ?: phone?.screen?.target?.value?.packageName
+                                val label = pkg?.takeIf { it.isNotBlank() }?.let { ConfirmationNotifier.appLabel(service, it) }
+                                val bmp = d.frames.value ?: d.refreshPreviewFrame()
+                                StageGuidanceFrame(label, snap, bmp)
+                            }
+                        }
                         side.launch {
                             combine(d.frames, _appShown.flow) { frame, shown -> frame to shown }.collect { (frame, shown) ->
                                 if (dispatcher?.surface != WEB) {
@@ -1063,7 +1087,10 @@ class TaskRun(
                 SystemPrompt.identity(),
                 // 助手断开、被挪走只在这一步用的是手机时才查
                 gate = { w ->
-                    if (phoneScreen.acquired && dispatcher?.surface != WEB) phone?.screen?.let { awaitUserPick(it, taskGate, w) }
+                    if (phoneScreen.acquired && dispatcher?.surface != WEB) {
+                        if (stageTouchHold.value) stageTouchHold.first { !it }
+                        phone?.screen?.let { awaitUserPick(it, taskGate, w) }
+                    }
                     taskGate.pass({ phoneScreen.acquired && dispatcher?.surface != WEB }, w)
                 }, knowledge = knowledge, sink = sink, trace = trace, installedApps = { apps },
                 // 选渠道用的事实:装了哪些 App、在 Mika 里登录过哪些网站、有没有内置浏览器
@@ -1228,19 +1255,44 @@ class TaskRun(
 
     /**
      * 小窗直接操作的口子:把预览画面上的归一化坐标换算成虚拟屏逻辑坐标,交给内置助手注入。
-     * 注入走后台线程:injectStroke 会按笔迹时长逐点 sleep,不能占着界面线程。
+     * 流式触摸走 injectTouchEvent 异步非阻塞透传;降级通道 injectStroke 按笔迹时长在 IO 线程注入。
      */
     private class PipInputImpl(
         private val shell: com.wangzan101.mika.shell.IMikaShell,
         private val display: AgentDisplay,
+        private val isLocked: () -> Boolean = { false },
     ) : PipInput {
+        override fun onInteractiveChanged(interactive: Boolean) {
+            display.setInteractiveQuality(interactive)
+        }
+
+        override fun injectTouch(
+            action: Int,
+            downTime: Long,
+            eventTime: Long,
+            pointerIds: IntArray,
+            normXs: FloatArray,
+            normYs: FloatArray,
+        ): Boolean {
+            if (isLocked()) return false
+            if (pointerIds.isEmpty() || pointerIds.size != normXs.size || pointerIds.size != normYs.size) return false
+            val n = pointerIds.size
+            val px = FloatArray(n) { scaleTouchToDisplay(normXs[it], display.width) }
+            val py = FloatArray(n) { scaleTouchToDisplay(normYs[it], display.height) }
+            return runCatching {
+                shell.injectTouchEvent(display.displayId, action, downTime, eventTime, pointerIds, px, py)
+            }.getOrDefault(false)
+        }
+
         override suspend fun tap(fx: Float, fy: Float) {
+            if (isLocked()) return
             withContext(Dispatchers.IO) {
                 runCatching { shell.injectTap(display.displayId, (fx * display.width).toInt(), (fy * display.height).toInt()) }
             }
         }
 
         override suspend fun swipe(points: List<Pair<Float, Float>>, durationMs: Long) {
+            if (isLocked()) return
             if (points.size < 2) {
                 if (points.size == 1) tap(points[0].first, points[0].second)
                 return
@@ -1259,6 +1311,7 @@ class TaskRun(
         }
 
         override suspend fun back() {
+            if (isLocked()) return
             withContext(Dispatchers.IO) {
                 runCatching { shell.injectKey(display.displayId, android.view.KeyEvent.KEYCODE_BACK) }
             }

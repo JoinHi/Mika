@@ -10,6 +10,7 @@ import android.os.Process
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.cap.sandbox.RuntimePreparer
 import com.wangzan101.mika.mcp.McpService
+import com.wangzan101.mika.personal.live.PersonalLiveService
 import com.wangzan101.mika.sandbox.SandboxService
 import com.wangzan101.mika.settings.ChatGptSignInService
 import com.wangzan101.mika.settings.FeatureFlags
@@ -45,8 +46,10 @@ object MikaQuit {
         // 主动能力开着时不再读通知:请系统解绑监听,免得系统为了它把进程又拉起来
         runCatching { if (FeatureFlags.get(app).proactive()) app.proactive.pause() }
         runCatching { app.mcp.stopServer() }
+        runCatching { app.personal.live.stop() }
         runCatching { app.chatGptSignIn.cancel() }
         runCatching { app.stopService(Intent(app, TaskService::class.java)) }
+        runCatching { app.stopService(Intent(app, PersonalLiveService::class.java)) }
         runCatching { app.stopService(Intent(app, McpService::class.java)) }
         runCatching { app.stopService(Intent(app, WechatService::class.java)) }
         runCatching { app.stopService(Intent(app, SandboxService::class.java)) }

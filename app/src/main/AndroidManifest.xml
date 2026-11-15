@@ -257,6 +257,12 @@
                 android:value="Runs a user-requested phone task on the app's own virtual display and shows its progress; afterwards keeps the one web page the user asked to keep open running, for at most two hours" />
         </service>
 
+        <!-- Mika Live 实时全双工语音对话:切到别的 App 或锁屏期间以麦克风前台服务维持实时通话,通知栏常驻静音与挂断按钮 -->
+        <service
+            android:name=".personal.live.PersonalLiveService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <!-- 通话:Telecom 绑定伴侣 InCallService,系统电话仍用自己的通话界面;前台服务在锁屏时撑住进程。 -->
         <service
             android:name=".calls.MikaInCallService"

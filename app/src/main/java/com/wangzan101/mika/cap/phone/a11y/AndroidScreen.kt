@@ -130,7 +130,10 @@ class AndroidScreen(
      */
     private val awaitApp: suspend (packageName: String, user: Int?, timeoutMs: Long, free: suspend () -> Boolean) -> AppWait =
         { _, _, _, _ -> AppWait.Unsupported },
+    /** 统一的手机操控等待策略;语音极速模式下可动态跳过手势/打字停顿并收敛界面等待窗口。 */
+    private val waitProfile: () -> PhoneWaitProfile = { PhoneWaitProfile.STANDARD },
 ) : ScreenPort {
+    private val activePacing: GesturePacing get() = if (waitProfile().instantGesture) GesturePacing.Instant else pacing
     /** 屏还没建时为 -1;只在确认屏已建好之后用。 */
     private val displayId get() = display.current?.displayId ?: -1
     /** 屏已经建好(不等于打开过 App)。 */
@@ -273,7 +276,7 @@ class AndroidScreen(
      */
     override suspend fun readVisibleText(): List<VisibleTextLine>? = withContext(Dispatchers.IO) {
         if (!hasDisplay || !frameServable() || frameBlack() == true) return@withContext null
-        StillFrameRead.read(SystemClock::uptimeMillis, { delay(it) }, ::frameSignature) {
+        StillFrameRead.read(SystemClock::uptimeMillis, { delay(it) }, ::frameSignature, waitProfile()) {
             display.current?.latestFrameBitmap()?.let { PhoneOcr.read(it) }
         }
     }
@@ -288,13 +291,14 @@ class AndroidScreen(
         if (!hasDisplay) return@withContext ScreenDiagnosis.classify(
             ScreenFacts(currentApp = null, hasWindow = false, readableElements = 0, changing = false, blackFrames = emptyList(), texts = emptyList(), passwordField = false),
         )
+        val wp = waitProfile()
         // 先看界面会不会安静下来:一直有变化就是还在加载
-        val quiet = withEventClock { clock -> clock.awaitQuiet(QUIET_MS, CHECK_CAP_MS) }
+        val quiet = withEventClock { clock -> clock.awaitQuiet(wp.screenQuietMs, wp.screenCheckCapMs) }
         // 安静时看两次;持续全黑只报画面不可用,不把黑像素当成防截屏的证据
         val black = mutableListOf<Boolean>()
         frameBlack()?.let(black::add)
         if (quiet) {
-            withEventClock { clock -> clock.awaitQuiet(SECOND_LOOK_QUIET_MS, SECOND_LOOK_CAP_MS) }
+            withEventClock { clock -> clock.awaitQuiet(wp.secondLookQuietMs, wp.secondLookCapMs) }
             frameBlack()?.let(black::add)
         }
         val r = read()
@@ -315,7 +319,7 @@ class AndroidScreen(
 
     override suspend fun waitStable(timeoutMs: Long): Boolean = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext true
-        withEventClock { clock -> clock.awaitQuiet(QUIET_MS, timeoutMs) }
+        withEventClock { clock -> clock.awaitQuiet(waitProfile().screenQuietMs, timeoutMs) }
     }
 
     /** 这块虚拟屏的下一条界面事件(悬停一类不算);屏还没开时等满时限。 */
@@ -416,10 +420,10 @@ class AndroidScreen(
         val rect = Rect().also(node::getBoundsInScreen)
         val touchFallback: suspend (EventClock) -> Boolean = { clock ->
             clock.mark()
-            touch(pacing.within(rect.left, rect.top, rect.right, rect.bottom))
+            touch(activePacing.within(rect.left, rect.top, rect.right, rect.bottom))
         }
         if (target == null) return@withContext verified(relocatedTo = relocatedTo) {
-            touch(pacing.within(rect.left, rect.top, rect.right, rect.bottom))
+            touch(activePacing.within(rect.left, rect.top, rect.right, rect.bottom))
         }
         val outward = ClickFallback.mayBeOutward(ScreenReader.labelOf(node), node.viewIdResourceName) ||
             ClickFallback.mayBeOutward(ScreenReader.labelOf(target), target.viewIdResourceName)
@@ -437,18 +441,19 @@ class AndroidScreen(
         if (!hasDisplay) return@withContext NO_APP_OPEN
         val target = resolve(ref, snapshotId) ?: return@withContext ActionResult.Failed("ref_expired")
         val rect = android.graphics.Rect().also { target.first.getBoundsInScreen(it) }
-        verified(relocatedTo = target.second) { doubleTapAt(pacing.within(rect.left, rect.top, rect.right, rect.bottom)) }
+        verified(relocatedTo = target.second) { doubleTapAt(activePacing.within(rect.left, rect.top, rect.right, rect.bottom)) }
     }
 
     override suspend fun doubleTapXY(x: Int, y: Int): ActionResult = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext NO_APP_OPEN
-        verified { doubleTapAt(pacing.near(x, y)) }
+        verified { doubleTapAt(activePacing.near(x, y)) }
     }
 
     // 双击只能是一次手势里的两笔:分两次下发,中间的回调延迟可能超过系统认双击的时限
     private suspend fun doubleTapAt(at: Pair<Int, Int>): Boolean {
-        delay(pacing.approach())
-        return a11y.taps(displayId, at.first.toFloat(), at.second.toFloat(), 2, pacing.doublePress(), pacing.doubleGap())
+        val gp = activePacing
+        delay(gp.approach())
+        return a11y.taps(displayId, at.first.toFloat(), at.second.toFloat(), 2, gp.doublePress(), gp.doubleGap())
     }
 
     override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long): ActionResult = withContext(Dispatchers.IO) {
@@ -462,8 +467,9 @@ class AndroidScreen(
         verified {
             // 一根手指照着画好的路径走,按节奏排快慢;几根手指一起动的只让时长浮动一点
             if (paths.size == 1) return@verified drag(paths.single(), durationMs, bow = false)
-            delay(pacing.approach())
-            a11y.gesture(displayId, paths.map(::pathOf), pacing.duration(durationMs))
+            val gp = activePacing
+            delay(gp.approach())
+            a11y.gesture(displayId, paths.map(::pathOf), gp.duration(durationMs))
         }
     }
 
@@ -653,9 +659,10 @@ class AndroidScreen(
             field.refresh()
             // ACTION_FOCUS 的返回值和焦点标志都可能不可靠:没确认拿到焦点时,再按普通输入框点一下。
             if (!field.isFocused) {
+                val wp = waitProfile()
                 withEventClock { clock ->
                     clock.mark()
-                    click(field).also { if (it) clock.awaitQuiet(QUIET_MS, FOCUS_WAIT_MS) }
+                    click(field).also { if (it) clock.awaitQuiet(wp.screenQuietMs, wp.focusWaitMs) }
                 }
                 focusedEditable()?.takeIf { sameField(original, it) }?.let { field = it }
             }
@@ -700,11 +707,15 @@ class AndroidScreen(
         val textsBefore = read().texts.toSet()
         // 像人一样一段一段打出来(见 TypingPacing);密码框、要粘贴才收得到的网页框照旧一次写入。
         // 写不进、框不接受半截字时停下,下面照旧整段写入并读回核对
-        typing(field.packageName?.toString()).forField(web, field.isPassword).leadIn(io, text)
+        val activeTyping = if (waitProfile().instantTyping) TypingPacing.Instant else typing(field.packageName?.toString())
+        activeTyping.forField(web, field.isPassword).leadIn(io, text)
         var frozen = false
         val verification = typeAndVerify(
             io, text, TYPE_ATTEMPTS,
-            settle = { withEventClock { clock -> clock.awaitQuiet(READBACK_QUIET_MS, READBACK_CAP_MS) } },
+            settle = {
+                val wp = waitProfile()
+                withEventClock { clock -> clock.awaitQuiet(wp.readbackQuietMs, wp.readbackCapMs) }
+            },
             // 读回一直不变时,看界面上有没有冒出含所输文字的新文字(联想词等)
             reacted = {
                 val typed = text.filterNot { it.isWhitespace() }
@@ -952,7 +963,7 @@ class AndroidScreen(
                 ctrlKey(KeyEvent.KEYCODE_V)
             }
             // 选区或光标可能先重绘,App 随后才异步读取剪贴板。
-            Thread.sleep(PASTE_WAIT_MS)
+            Thread.sleep(waitProfile().pasteWaitMs)
             sent
         }
 
@@ -1069,7 +1080,7 @@ class AndroidScreen(
                         context.ensureActive()
                         // performAction=false 不能证明点击没落到菜单上;按不确定收尾,不补发别的输入。
                         if (!paste.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return@withClipboardText AsciiTextKeys.UNCONFIRMED
-                        Thread.sleep(PASTE_WAIT_MS)
+                        Thread.sleep(waitProfile().pasteWaitMs)
                         return@withClipboardText AsciiTextKeys.DISPATCHED
                     }
                     previous = paste
@@ -1273,7 +1284,7 @@ class AndroidScreen(
         val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
         // 系统先问打开哪一个时 App 不会自己到前台:看到选择框就不再干等
         while (!launched() && chooserOf(packageName, before) == null && picker() == null && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
-        waitStable(SETTLE_CAP_MS)
+        waitStable(waitProfile().settleCapMs)
         val onTop = launched()
         val task = if (onTop) shell.topTaskId(displayId) else -1
         _target.value = TargetApp(packageName, task, if (task >= 0) userOf(task) else user ?: -1)
@@ -1338,13 +1349,13 @@ class AndroidScreen(
             if (!runCatching { shell.injectTap(displayId, x, y) }.getOrDefault(false)) break
             val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
             while (foregroundTaskPackage() != packageName && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
-            waitStable(SETTLE_CAP_MS)
+            waitStable(waitProfile().settleCapMs)
             if (foregroundTaskPackage() != packageName) break
             opened()?.let { return it }
             shown = userOf(topTask())
             Log.i(TAG, "chooser option $tried opened user $shown, not the requested $user")
             runCatching { shell.injectKey(displayId, KeyEvent.KEYCODE_BACK) }
-            waitStable(SETTLE_CAP_MS)
+            waitStable(waitProfile().settleCapMs)
             if (tried >= targets.size) break
             if (runCatching { shell.startAppInUser(displayId, packageName, user, false) }.getOrDefault(ShellService.START_ERROR) != ShellService.START_OK) break
             val until = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
@@ -1412,7 +1423,7 @@ class AndroidScreen(
         }
         val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
         while (!landed() && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
-        waitStable(SETTLE_CAP_MS)
+        waitStable(waitProfile().settleCapMs)
         val top = ScreenReader.topPackage(windows())
         val changed = top != before || treeHash() != beforeTree
         if (changed) awaitFrameAfter(startedAt) else frameGuardSince = null
@@ -1468,7 +1479,7 @@ class AndroidScreen(
         if (!hasDisplay) return@withContext false
         val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
         while (ScreenReader.topPackage(windows()) == null && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
-        waitStable(SETTLE_CAP_MS)
+        waitStable(waitProfile().settleCapMs)
         ScreenReader.topPackage(windows()) != null
     }
 
@@ -1534,7 +1545,7 @@ class AndroidScreen(
             val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
             while (top() != pkg && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
         }
-        waitStable(SETTLE_CAP_MS)
+        waitStable(waitProfile().settleCapMs)
         val landed = top() == pkg
         // 本该悄悄设好的,屏上却多了那个 App 的界面
         val showing = action.silent && landed && topBefore != pkg
@@ -1832,14 +1843,15 @@ class AndroidScreen(
         }
         if (activity != null && activity.flags and ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS != 0) return true
         val metrics = a11y.resources.displayMetrics
+        val popupSettle = waitProfile().popupSettleMs
         // 刚冒出来的窗口可能还在开场动画里(画得比整屏小),等它停稳再看一次,免得把普通 App 当成弹窗
         var window = topWindowOf(pkg)
         if (window == null) {
-            delay(POPUP_SETTLE_MS)
+            delay(popupSettle)
             window = topWindowOf(pkg) ?: return false
         }
         if (isNarrow(window, metrics)) {
-            delay(POPUP_SETTLE_MS)
+            delay(popupSettle)
             val settled = topWindowOf(pkg) ?: return false
             if (isNarrow(settled, metrics)) return true
             window = settled
@@ -1900,7 +1912,7 @@ class AndroidScreen(
         if (checkOtherTasks) reserve(pkg)
         val deadline = SystemClock.uptimeMillis() + LAUNCH_WAIT_MS
         while (runCatching { shell.topTaskId(displayId) }.getOrDefault(-1) != a.taskId && SystemClock.uptimeMillis() < deadline) delay(POLL_MS)
-        waitStable(SETTLE_CAP_MS)
+        waitStable(waitProfile().settleCapMs)
         val profile = if (isSystemPackage(pkg)) null else inProfileOf(pkg, a.userId)
         return Spill(OpenedElsewhere(pkg, appLabel(pkg), pulledBack = true, inProfile = profile, byUser = byUser), null)
     }
@@ -1950,7 +1962,7 @@ class AndroidScreen(
                 val top = runCatching { shell.topTaskId(displayId) }.getOrDefault(-1)
                 if (top >= 0 && top != p.agentTop && top !in adopted) {
                     adopted += top
-                    waitStable(SETTLE_CAP_MS)
+                    waitStable(waitProfile().settleCapMs)
                     val pkg = runCatching { shell.packageOfTask(top) }.getOrNull() ?: p.packageName
                     val profile = inProfileOf(pkg, runCatching { shell.userOfTask(top) }.getOrDefault(-1))
                     pendingReport = Spill(OpenedElsewhere(pkg, appLabel(pkg), pulledBack = true, inProfile = profile), null)
@@ -2065,6 +2077,7 @@ class AndroidScreen(
             treeChanged = { treeHash() != beforeTree },
             beforeFrame = beforeFrame,
             fallback = fallback,
+            profile = waitProfile(),
         )
 
     /** 前台不是目标 App、也不是它调起的系统页面或系统选择器时,返回当前前台包名及是否由目标 App 打开。 */
@@ -2190,9 +2203,10 @@ class AndroidScreen(
             }
             if (!tapToFocus || !looksLikeInputEntry(node)) return Field.Missing("not_editable")
             val focusedBefore = focusedEditable()
+            val wp = waitProfile()
             val clicked = withEventClock { clock ->
                 clock.mark()
-                click(node).also { if (it) clock.awaitQuiet(QUIET_MS, FOCUS_WAIT_MS) }
+                click(node).also { if (it) clock.awaitQuiet(wp.screenQuietMs, wp.focusWaitMs) }
             }
             val now = focusedField()
             return when {
@@ -2311,18 +2325,19 @@ class AndroidScreen(
         val target = ancestorOrSelf(node) { isClickableTarget(it) }
         if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
         val rect = android.graphics.Rect().also { node.getBoundsInScreen(it) }
-        return touch(pacing.within(rect.left, rect.top, rect.right, rect.bottom))
+        return touch(activePacing.within(rect.left, rect.top, rect.right, rect.bottom))
     }
 
-    private suspend fun tapAt(x: Int, y: Int): Boolean = touch(pacing.near(x, y))
+    private suspend fun tapAt(x: Int, y: Int): Boolean = touch(activePacing.near(x, y))
 
     /** 在这一点上点一下:先停一会儿再落指,按住随机的一小会儿。无障碍手势不行时由内置助手注入触摸。 */
     private suspend fun touch(at: Pair<Int, Int>): Boolean {
         val (x, y) = at
-        delay(pacing.approach())
-        val press = pacing.press()
+        val gp = activePacing
+        delay(gp.approach())
+        val press = gp.press()
         if (a11y.gesture(displayId, Path().apply { moveTo(x.toFloat(), y.toFloat()) }, press)) return true
-        if (pacing.paced && injectStroke(listOf(GesturePacing.Point(x.toDouble(), y.toDouble(), 0), GesturePacing.Point(x.toDouble(), y.toDouble(), press)))) return true
+        if (gp.paced && injectStroke(listOf(GesturePacing.Point(x.toDouble(), y.toDouble(), 0), GesturePacing.Point(x.toDouble(), y.toDouble(), press)))) return true
         return shell.injectTap(displayId, x, y)
     }
 
@@ -2331,9 +2346,10 @@ class AndroidScreen(
      * 助手注不了时退回无障碍手势沿同一条弧线走(系统按路径匀速走,只少了快慢)。不加节奏时和以前一样:无障碍手势按给定时长匀速走折线。
      */
     private suspend fun drag(points: List<Pair<Int, Int>>, durationMs: Long, bow: Boolean): Boolean {
-        if (!pacing.paced) return a11y.gesture(displayId, pathOf(points), durationMs)
-        delay(pacing.approach())
-        val stroke = pacing.stroke(points.map { it.first.toDouble() to it.second.toDouble() }, durationMs, bow, screenWidth to screenHeight)
+        val gp = activePacing
+        if (!gp.paced) return a11y.gesture(displayId, pathOf(points), durationMs)
+        delay(gp.approach())
+        val stroke = gp.stroke(points.map { it.first.toDouble() to it.second.toDouble() }, durationMs, bow, screenWidth to screenHeight)
         if (injectStroke(stroke.points)) return true
         return a11y.gesture(displayId, pathOf(stroke.points.map { it.x.roundToInt() to it.y.roundToInt() }), stroke.durationMs)
     }
@@ -2386,7 +2402,7 @@ class AndroidScreen(
             // 标准动作返回 false 时也可能已经产生效果;按不确定处理,不补发快捷键。
             if (!node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return@withClipboardText AsciiTextKeys.UNCONFIRMED
             // App 是异步去读剪贴板的:等字变了再还原,最多等一会儿
-            val deadline = SystemClock.uptimeMillis() + PASTE_WAIT_MS
+            val deadline = SystemClock.uptimeMillis() + waitProfile().pasteWaitMs
             while (SystemClock.uptimeMillis() < deadline) {
                 if (node.refresh() && node.text?.toString().orEmpty() != before) break
                 Thread.sleep(POLL_MS)

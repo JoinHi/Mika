@@ -144,6 +144,9 @@ interface IMikaShell {
     // Replace the device-file bridge policy. Empty roots deny all access; protocol and revision are separate.
     Bundle setDeviceFilePolicy(int protocol, String session, long revision, in String[] roots, in boolean[] recursive) = 60;
 
+    // 实时流式注入单指或多指触摸事件(DOWN / POINTER_DOWN / MOVE / POINTER_UP / UP / CANCEL),只发到 Mika 自有屏,异步零阻塞。
+    boolean injectTouchEvent(int displayId, int action, long downTime, long eventTime, in int[] pointerIds, in float[] xs, in float[] ys) = 61;
+
     // 沿用早先定下的销毁事务号;AIDL 要求要么全部方法编号要么都不编号
     void destroy() = 16777114;
 }

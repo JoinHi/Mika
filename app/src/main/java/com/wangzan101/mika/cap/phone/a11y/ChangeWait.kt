@@ -39,19 +39,24 @@ internal object ChangeWait {
         treeChanged: () -> Boolean,
         beforeFrame: IntArray?,
         fallback: (suspend () -> Boolean)? = null,
+        profile: PhoneWaitProfile = PhoneWaitProfile.STANDARD,
     ): Boolean {
+        val pollMs = profile.changePollMs
+        val quietMs = profile.changeQuietMs
+        val probeMs = profile.changeProbeMs
+        val capMs = profile.changeCapMs
         val start = now()
-        var deadline = start + CAP_MS
-        val probeDeadline = start + PROBE_MS
+        var deadline = start + capMs
+        val probeDeadline = start + probeMs
         var probePending = fallback != null
         var prev = frame()
-        var wait = POLL_MS
+        var wait = pollMs
         while (true) {
             val wake = if (probePending) minOf(deadline, probeDeadline) else deadline
             sleep(minOf(wait, (wake - now()).coerceAtLeast(0)))
             val cur = frame()
             val quietFor = quietForMs()
-            val quiet = quietFor >= QUIET_MS
+            val quiet = quietFor >= quietMs
             val treeDiff = treeChanged()
             if (quiet && treeDiff) return true
             val stable = if (prev == null || cur == null) prev == null && cur == null else !FrameMath.differs(prev, cur)
@@ -61,14 +66,14 @@ internal object ChangeWait {
             if (probePending && now() >= probeDeadline) {
                 probePending = false
                 if (quiet && stable && fallback != null && fallback()) {
-                    deadline = now() + CAP_MS
+                    deadline = now() + capMs
                     prev = frame()
-                    wait = POLL_MS
+                    wait = pollMs
                     continue
                 }
             }
             if (now() >= deadline) return frameChanged || treeDiff
-            wait = if (quiet) POLL_MS else minOf(POLL_MS, QUIET_MS - quietFor).coerceAtLeast(MIN_SLEEP_MS)
+            wait = if (quiet) pollMs else minOf(pollMs, quietMs - quietFor).coerceAtLeast(MIN_SLEEP_MS)
             prev = cur
         }
     }

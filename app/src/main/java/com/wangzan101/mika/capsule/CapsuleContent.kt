@@ -249,7 +249,7 @@ private fun Leading(kind: CapsuleKind) {
         kind == CapsuleKind.Done -> Icon(MikaIcons.Check, null, Modifier.size(16.dp), tint = c.ok)
         kind == CapsuleKind.Failed -> Icon(MikaIcons.Exclaim, null, Modifier.size(16.dp), tint = c.ink3)
         kind == CapsuleKind.Cancelled -> Icon(MikaIcons.Stop, null, Modifier.size(16.dp), tint = c.ink3)
-        kind == CapsuleKind.KeptPage -> LiveDot(c)
+        kind == CapsuleKind.LiveVoice || kind == CapsuleKind.KeptPage -> LiveDot(c)
         else -> Unit
     }
 }

@@ -1223,6 +1223,73 @@ class ShellService(
         return send(n - 1, MotionEvent.ACTION_UP) || send(n - 1, MotionEvent.ACTION_UP)
     }
 
+    /**
+     * 实时流式注入一次单指或多指 [MotionEvent]:只投给 Mika 自己的虚拟屏,采用异步模式([INJECT_MODE_ASYNC])
+     * 避免在 Binder 线程阻塞,支持点击、长按、惯性滑动、进度条拖拽与 App 内双指缩放。
+     */
+    override fun injectTouchEvent(
+        displayId: Int,
+        action: Int,
+        downTime: Long,
+        eventTime: Long,
+        pointerIds: IntArray?,
+        xs: FloatArray?,
+        ys: FloatArray?,
+    ): Boolean {
+        if (!ownDisplay(displayId)) return false
+        val ids = pointerIds ?: return false
+        val px = xs ?: return false
+        val py = ys ?: return false
+        val n = ids.size
+        if (n !in 1..TOUCH_MAX_POINTERS || px.size != n || py.size != n) return false
+        val masked = action and MotionEvent.ACTION_MASK
+        if (masked !in ALLOWED_TOUCH_ACTIONS) return false
+        val actionIndex = (action and MotionEvent.ACTION_POINTER_INDEX_MASK) ushr MotionEvent.ACTION_POINTER_INDEX_SHIFT
+        if ((masked == MotionEvent.ACTION_POINTER_DOWN || masked == MotionEvent.ACTION_POINTER_UP) && actionIndex !in 0 until n) {
+            return false
+        }
+        val now = SystemClock.uptimeMillis()
+        val safeEventTime = if (eventTime > 0L) eventTime.coerceAtMost(now) else now
+        val safeDownTime = if (downTime > 0L) downTime.coerceAtMost(safeEventTime) else safeEventTime
+        val props = Array(n) { i ->
+            MotionEvent.PointerProperties().apply {
+                id = ids[i].coerceIn(0, 31)
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+        }
+        val coords = Array(n) { i ->
+            val released = masked == MotionEvent.ACTION_UP || masked == MotionEvent.ACTION_CANCEL ||
+                (masked == MotionEvent.ACTION_POINTER_UP && i == actionIndex)
+            MotionEvent.PointerCoords().apply {
+                x = px[i]
+                y = py[i]
+                pressure = if (released) 0f else 1f
+                size = 1f
+            }
+        }
+        val ev = MotionEvent.obtain(
+            safeDownTime,
+            safeEventTime,
+            action,
+            n,
+            props,
+            coords,
+            0,
+            0,
+            1f,
+            1f,
+            0,
+            0,
+            InputDevice.SOURCE_TOUCHSCREEN,
+            0,
+        ) ?: return false
+        return try {
+            inject(ev, displayId, waitForFinish = false)
+        } finally {
+            ev.recycle()
+        }
+    }
+
     private inline fun injectPair(down: InputEvent, up: InputEvent, displayId: Int, fallback: () -> Boolean): Boolean =
         sendPair({ inject(down, displayId) }, { inject(up, displayId) }, fallback)
 
@@ -1710,6 +1777,15 @@ class ShellService(
         // injectStroke 一笔的上限:点数、从按下到抬起的毫秒数
         private const val STROKE_MAX_POINTS = 1_024
         private const val STROKE_MAX_MS = 10_000L
+        private const val TOUCH_MAX_POINTERS = 10
+        private val ALLOWED_TOUCH_ACTIONS = setOf(
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_POINTER_UP,
+        )
         private const val CMD_TIMEOUT_S = 10L
         private const val COMMAND_OUTPUT_MAX = 64 * 1024
         private const val READER_JOIN_MS = 1_000L

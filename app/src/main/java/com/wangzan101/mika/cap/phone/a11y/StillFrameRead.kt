@@ -17,9 +17,15 @@ internal object StillFrameRead {
     const val ATTEMPTS = 2
 
     /** [recognize] 认当前一帧;它给 null(没有画面)时直接返回 null。每次都整页变了也返回 null。 */
-    suspend fun <T : Any> read(now: () -> Long, sleep: suspend (Long) -> Unit, frame: () -> IntArray?, recognize: suspend () -> T?): T? {
+    suspend fun <T : Any> read(
+        now: () -> Long,
+        sleep: suspend (Long) -> Unit,
+        frame: () -> IntArray?,
+        profile: PhoneWaitProfile = PhoneWaitProfile.STANDARD,
+        recognize: suspend () -> T?,
+    ): T? {
         repeat(ATTEMPTS) {
-            awaitStill(now, sleep, frame)
+            awaitStill(now, sleep, frame, profile)
             val before = frame()
             val result = recognize() ?: return null
             if (!FrameMath.pageChanged(before, frame())) return result
@@ -28,11 +34,17 @@ internal object StillFrameRead {
     }
 
     /** 等到前后两帧相近;到时限还在动返回 false。没有画面时不等。 */
-    suspend fun awaitStill(now: () -> Long, sleep: suspend (Long) -> Unit, frame: () -> IntArray?): Boolean {
-        val deadline = now() + STILL_CAP_MS
+    suspend fun awaitStill(
+        now: () -> Long,
+        sleep: suspend (Long) -> Unit,
+        frame: () -> IntArray?,
+        profile: PhoneWaitProfile = PhoneWaitProfile.STANDARD,
+    ): Boolean {
+        val pollMs = profile.stillPollMs
+        val deadline = now() + profile.stillCapMs
         var prev = frame() ?: return true
         while (true) {
-            sleep(minOf(POLL_MS, (deadline - now()).coerceAtLeast(0)))
+            sleep(minOf(pollMs, (deadline - now()).coerceAtLeast(0)))
             val cur = frame() ?: return true
             if (!FrameMath.differs(prev, cur)) return true
             if (now() >= deadline) return false

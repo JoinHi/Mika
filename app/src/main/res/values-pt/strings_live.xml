@@ -1,0 +1,69 @@
+<resources>
+    <string name="live_channel_name">Voz ao vivo do Mika Live</string>
+    <string name="live_channel_desc">Mantém a conversa de voz em tempo real ativa ao alternar de app ou bloquear a tela</string>
+    <string name="live_notification_title">Mika Live</string>
+    <string name="live_capsule_title">Mika Live</string>
+    <string name="live_entry_button">Ao vivo</string>
+    <string name="live_entry_active">Ao vivo</string>
+
+    <string name="live_status_connecting">Conectando…</string>
+    <string name="live_status_reconnecting">Reconectando…</string>
+    <string name="live_status_suspended_call">Pausado por chamada telefônica</string>
+    <string name="live_status_muted">Silenciado</string>
+    <string name="live_status_speaking">Falando</string>
+    <string name="live_status_listening">Ouvindo</string>
+    <string name="live_status_listening_tasks">Ouvindo · %1$d ativas</string>
+
+    <string name="live_action_mute">Silenciar</string>
+    <string name="live_action_unmute">Ativar microfone</string>
+    <string name="live_action_hangup">Encerrar</string>
+    <string name="live_action_share_screen">Compartilhar tela atual</string>
+    <string name="live_action_type_message">Digitar mensagem</string>
+    <string name="live_action_back_to_voice">Barra de voz</string>
+    <string name="live_action_settings">Configurações de voz</string>
+
+    <string name="live_you_prefix">Você: %1$s</string>
+    <string name="live_mika_prefix">Mika: %1$s</string>
+
+    <string name="live_settings_title">Voz do Mika Live</string>
+    <string name="live_settings_subtitle">Conversa de voz bidirecional em tempo real enquanto controla o celular com Gemini Live</string>
+    <string name="live_settings_provider_label">Provedor Gemini</string>
+    <string name="live_settings_no_gemini_body">Nenhum provedor Gemini com chave de API foi configurado ainda. Adicione primeiro uma chave de API do Gemini nas Configurações de modelos.</string>
+    <string name="live_settings_open_models">Abrir configurações de modelos</string>
+    <string name="live_settings_voice_label">Voz</string>
+    <string name="live_settings_model_label">Modelo de áudio ao vivo</string>
+    <string name="live_settings_refresh_models">Atualizar</string>
+    <string name="live_settings_start_now">Iniciar Mika Live</string>
+    <string name="live_settings_reconnect_apply">Reconectar e aplicar</string>
+
+    <string name="live_error_mic_permission">A permissão do microfone é necessária para a conversa de voz do Mika Live.</string>
+    <string name="live_error_no_gemini_key">Configure primeiro uma chave de API do Gemini nas Configurações de modelos.</string>
+    <string name="live_error_in_carrier_call">Não é possível iniciar o Mika Live durante uma chamada telefônica.</string>
+    <string name="live_error_connect_failed">Não foi possível conectar ao Gemini Live. Verifique sua chave de API e a rede.</string>
+    <string name="live_error_audio_init">Não foi possível iniciar o áudio bidirecional. Outro aplicativo pode estar usando o microfone.</string>
+    <string name="live_screen_unavailable">Alterne primeiro para outro aplicativo e verifique a acessibilidade e a permissão de compartilhamento de tela.</string>
+    <string name="live_hint_idle_hangup">O Mika Live foi encerrado automaticamente após 3 minutos de silêncio.</string>
+
+    <string name="live_hint_turbo_on">⚡ Modo turbo ativado (sem esperas + controle direto por voz)</string>
+    <string name="live_hint_turbo_off">Modo padrão ativado (pausas naturais + tarefas em segundo plano)</string>
+    <string name="live_hint_direct_elapsed">⚡ Controle direto · %1$d etapas em %2$ss</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ Tarefa turbo em %1$ss</string>
+    <string name="live_hint_task_standard_elapsed">Modo padrão em %1$ss</string>
+    <string name="live_mode_turbo_badge">Turbo</string>
+    <string name="live_mode_standard_badge">Padrão</string>
+    <string name="live_mode_turbo_summary">Sem esperas · controle direto por voz</string>
+    <string name="live_mode_standard_summary">Pausas padrão · comparação base</string>
+    <string name="live_settings_turbo_title">Modo de controle turbo (comparar)</string>
+    <string name="live_settings_turbo_desc">Ignora pausas artificiais e esperas no modo de voz e ativa ações diretas com o Gemini Live. Desative para comparar com o modo padrão.</string>
+
+    <string name="live_stage_idle_title">Tela virtual ao vivo pronta</string>
+    <string name="live_stage_idle_body">Peça à Mika para abrir um aplicativo ou executar uma ação e veja a tela em tempo real em tamanho máximo.</string>
+    <string name="live_stage_preparing">Iniciando tela virtual ao vivo…</string>
+    <string name="live_stage_touch_on">Toque</string>
+    <string name="live_stage_touch_off">Zoom</string>
+    <string name="live_stage_view_chat">Chat</string>
+    <string name="live_stage_view_screen">Tela</string>
+    <string name="live_stage_using_web">Navegador web</string>
+    <string name="live_stage_back">Voltar na tela virtual</string>
+    <string name="live_stage_snapshot_wake">Tela pausada · Toque para retomar</string>
+</resources>

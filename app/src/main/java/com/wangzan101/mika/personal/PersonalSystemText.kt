@@ -28,6 +28,8 @@ fun personalSystemText(context: Context, type: String?, fallback: String): Strin
         "wait_confirmation" -> R.string.personal_system_wait_confirmation
         "saving" -> R.string.personal_system_saving
         "waiting" -> R.string.personal_system_waiting
+        "live_on_call" -> R.string.live_status_suspended_call
+        "live_send_failed" -> R.string.live_error_connect_failed
         else -> return fallback
     }
     return context.getString(id)

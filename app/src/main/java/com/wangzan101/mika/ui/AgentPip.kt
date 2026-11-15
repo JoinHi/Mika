@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import com.wangzan101.mika.ui.theme.MikaType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -306,6 +307,12 @@ private fun PipWindow(
     // 直接操作:开了开关、小窗展开、有画面、口子还活着时才把点/滑注入到虚拟屏
     val operate = operateEnabled && pip.expanded && frame != null && pipInput != null
     val operateInput = pipInput.takeIf { operate }
+    DisposableEffect(pipInput, operate) {
+        if (operate) pipInput?.onInteractiveChanged(true)
+        onDispose {
+            if (operate) pipInput?.onInteractiveChanged(false)
+        }
+    }
     val breath = if (pip.mode == PipMode.NeedsYou && !reduceMotion) {
         rememberInfiniteTransition(label = "breathe").animateFloat(
             1f, 0.55f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "breathe",
@@ -388,7 +395,7 @@ private fun PipWindow(
                     val fit = fittedSize(frame.width, frame.height, w - insetDp * 2, h - insetDp * 2)
                     Box(
                         Modifier.size(fit.first, fit.second).testTag("pip-frame")
-                            .then(if (operateInput != null) operateInputModifier(operateInput, scope) else Modifier),
+                            .then(if (operateInput != null) Modifier.virtualScreenTouch(operateInput) else Modifier),
                     ) {
                         Image(image, stringResource(R.string.pip_screen), Modifier.fillMaxSize(), alignment = Alignment.Center,
                             contentScale = ContentScale.Fit)
@@ -463,35 +470,6 @@ private fun fittedSize(frameW: Int, frameH: Int, innerW: Dp, innerH: Dp): Pair<D
     val a = frameW.toFloat() / frameH
     val w = if (innerW / a <= innerH) innerW else innerH * a
     return w to w / a
-}
-
-/** 直接操作时小窗画面的触摸:按下没动就点一下,动了就按走过的点滑一笔;坐标按这个框归一化到 0..1。 */
-private fun operateInputModifier(input: PipInput, scope: CoroutineScope): Modifier = Modifier.pointerInput(input) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        down.consume()
-        val points = mutableListOf(down.position)
-        var lastUptime = down.uptimeMillis
-        var moved = false
-        while (true) {
-            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-            if (!change.pressed) break
-            change.consume()
-            points += change.position
-            lastUptime = change.uptimeMillis
-            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
-        }
-        val pts = points.map { p ->
-            (p.x / size.width).coerceIn(0f, 1f) to (p.y / size.height).coerceIn(0f, 1f)
-        }
-        if (!moved) {
-            val (fx, fy) = pts.last()
-            scope.launch { input.tap(fx, fy) }
-        } else {
-            val duration = (lastUptime - down.uptimeMillis).coerceIn(80L, 600L)
-            scope.launch { input.swipe(pts, duration) }
-        }
-    }
 }
 
 /** Discrete controls also let a screen-reader user resize without a two-finger gesture. */

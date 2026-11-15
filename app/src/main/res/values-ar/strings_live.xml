@@ -1,0 +1,69 @@
+<resources>
+    <string name="live_channel_name">محادثة Mika Live الصوتية</string>
+    <string name="live_channel_desc">يبقي المحادثة الصوتية الفورية متصلة أثناء التنقل بين التطبيقات وقفل الشاشة</string>
+    <string name="live_notification_title">Mika Live</string>
+    <string name="live_capsule_title">Mika Live</string>
+    <string name="live_entry_button">مباشر</string>
+    <string name="live_entry_active">متصل</string>
+
+    <string name="live_status_connecting">جارٍ الاتصال…</string>
+    <string name="live_status_reconnecting">جارٍ إعادة الاتصال…</string>
+    <string name="live_status_suspended_call">متوقف مؤقتاً بسبب مكالمة</string>
+    <string name="live_status_muted">مكتوم</string>
+    <string name="live_status_speaking">يتحدث</string>
+    <string name="live_status_listening">يستمع</string>
+    <string name="live_status_listening_tasks">يستمع · %1$d مهام</string>
+
+    <string name="live_action_mute">كتم</string>
+    <string name="live_action_unmute">إلغاء الكتم</string>
+    <string name="live_action_hangup">إنهاء</string>
+    <string name="live_action_share_screen">مشاركة الشاشة الحالية</string>
+    <string name="live_action_type_message">كتابة رسالة</string>
+    <string name="live_action_back_to_voice">شريط الصوت</string>
+    <string name="live_action_settings">إعدادات الصوت</string>
+
+    <string name="live_you_prefix">أنت: %1$s</string>
+    <string name="live_mika_prefix">Mika: %1$s</string>
+
+    <string name="live_settings_title">Mika Live الصوتي</string>
+    <string name="live_settings_subtitle">محادثة صوتية فورية مزدوجة مع التحكم بالهاتف عبر Gemini Live</string>
+    <string name="live_settings_provider_label">مزود Gemini</string>
+    <string name="live_settings_no_gemini_body">لم يتم إعداد مزود Gemini بمفتاح API بعد. أضف مفتاح Gemini API في إعدادات النماذج أولاً.</string>
+    <string name="live_settings_open_models">فتح إعدادات النماذج</string>
+    <string name="live_settings_voice_label">الصوت</string>
+    <string name="live_settings_model_label">نموذج الصوت المباشر</string>
+    <string name="live_settings_refresh_models">تحديث</string>
+    <string name="live_settings_start_now">بدء Mika Live</string>
+    <string name="live_settings_reconnect_apply">إعادة الاتصال للتطبيق</string>
+
+    <string name="live_error_mic_permission">إذن الميكروفون مطلوب لاستخدام المحادثة الصوتية في Mika Live.</string>
+    <string name="live_error_no_gemini_key">يرجى إعداد مفتاح Gemini API في إعدادات النماذج أولاً.</string>
+    <string name="live_error_in_carrier_call">لا يمكن بدء Mika Live أثناء وجود مكالمة هاتفية جارية.</string>
+    <string name="live_error_connect_failed">تعذر الاتصال بخدمة Gemini Live. تحقق من مفتاح API والشبكة.</string>
+    <string name="live_error_audio_init">تعذر تهيئة الصوت المزدوج. قد يكون تطبيق آخر يستخدم الميكروفون.</string>
+    <string name="live_screen_unavailable">انتقل إلى تطبيق آخر أولاً وتأكد من تفعيل خدمة تسهيل الاستخدام ومشاركة الشاشة.</string>
+    <string name="live_hint_idle_hangup">انتهت جلسة Mika Live تلقائياً بعد 3 دقائق من الصمت.</string>
+
+    <string name="live_hint_turbo_on">⚡ تم تفعيل الوضع السريع (تخطي الانتظار + تحكم صوتي مباشر)</string>
+    <string name="live_hint_turbo_off">تم تفعيل الوضع القياسي للمقارنة (إيقاع طبيعي + مهام خلفية)</string>
+    <string name="live_hint_direct_elapsed">⚡ تحكم مباشر · %1$d خطوات خلال %2$s ث</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ اكتملت المهمة السريعة خلال %1$s ث</string>
+    <string name="live_hint_task_standard_elapsed">اكتمل الوضع القياسي خلال %1$s ث</string>
+    <string name="live_mode_turbo_badge">سريع</string>
+    <string name="live_mode_standard_badge">قياسي</string>
+    <string name="live_mode_turbo_summary">تخطي الانتظار · تحكم صوتي مباشر</string>
+    <string name="live_mode_standard_summary">إيقاع قياسي · مهام خلفية للمقارنة</string>
+    <string name="live_settings_turbo_title">وضع التحكم السريع (مفتاح المقارنة)</string>
+    <string name="live_settings_turbo_desc">يتخطى فترات الانتظار والتأخير ويفعّل التحكم المباشر بالهاتف عبر Gemini Live. أوقفه للمقارنة مع الوضع القياسي.</string>
+
+    <string name="live_stage_idle_title">الشاشة الافتراضية المباشرة جاهزة</string>
+    <string name="live_stage_idle_body">اطلب من Mika فتح أي تطبيق أو تنفيذ إجراء وستظهر الشاشة المباشرة هنا بحجم كامل</string>
+    <string name="live_stage_preparing">جارٍ تشغيل الشاشة الافتراضية المباشرة…</string>
+    <string name="live_stage_touch_on">لمس</string>
+    <string name="live_stage_touch_off">تكبير</string>
+    <string name="live_stage_view_chat">المحادثة</string>
+    <string name="live_stage_view_screen">الشاشة</string>
+    <string name="live_stage_using_web">متصفح الويب</string>
+    <string name="live_stage_back">رجوع في الشاشة الافتراضية</string>
+    <string name="live_stage_snapshot_wake">الشاشة متوقفة مؤقتًا · انقر للمتابعة</string>
+</resources>

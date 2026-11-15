@@ -96,6 +96,8 @@ data class CapsuleInputs(
     val fullscreen: Boolean = false,
     /** 主动能力判为值得提醒、用户还没在提醒列表里看过的条数(只要个数,不带通知里的任何字)。 */
     val notices: Int = 0,
+    /** Mika Live 实时语音对话在后台运行时的胶囊状态文案;未运行时为 null。 */
+    val liveText: String? = null,
 )
 
 /** 胶囊的状态,按优先级从高到低排([ordinal] 小的先显示);[Idle] 是「一直显示」时没任务的图标。 */
@@ -104,6 +106,8 @@ enum class CapsuleKind {
     /** 要你在手机上动一下手(如在系统的选择框里选一个),动完自动接着做。 */
     NeedStep,
     Held, Running, Done, Failed, Cancelled,
+    /** Mika Live 实时语音在后台通话中(绿点)。 */
+    LiveVoice,
     /** 没有任务在跑,任务结束后留下的那一页在后台运行(「后台网页运行中」,绿点)。 */
     KeptPage,
     /** 没有别的事时,有判为值得提醒、还没看过的通知:空闲图标角上一个数,点开是提醒列表。不展开、不写字。 */
@@ -113,8 +117,8 @@ enum class CapsuleKind {
     /** 要你处理(胶囊变橙)。App 已经交到你手上([HandedOver])是顶部那一条,不算在内。 */
     val needsYou: Boolean get() = this == NeedTakeover || this == NeedConfirm || this == NeedAnswer || this == NeedStep
 
-    /** 还没结束(在跑、等你、等条件);[KeptPage]、[Notice]、[Idle] 不算。 */
-    val active: Boolean get() = this != Done && this != Failed && this != Cancelled && this != KeptPage && this != Notice && this != Idle
+    /** 还没结束(在跑、等你、等条件);[LiveVoice]、[KeptPage]、[Notice]、[Idle] 不算。 */
+    val active: Boolean get() = this != Done && this != Failed && this != Cancelled && this != LiveVoice && this != KeptPage && this != Notice && this != Idle
 }
 
 sealed interface CapsuleView {
@@ -216,7 +220,7 @@ class CapsuleModel(private val reasonLabel: (String) -> String? = { null }) {
             shownText = null
             return CapsuleView.Hidden
         }
-        val candidate = activeView(inputs.runs) ?: endedView(now) ?: keptView(inputs.kept) ?: noticeView(inputs) ?: idleView(inputs.mode) ?: run {
+        val candidate = activeView(inputs.runs) ?: endedView(now) ?: liveView(inputs.liveText) ?: keptView(inputs.kept) ?: noticeView(inputs) ?: idleView(inputs.mode) ?: run {
             shownIdentity = null
             shownText = null
             return CapsuleView.Hidden
@@ -322,6 +326,10 @@ class CapsuleModel(private val reasonLabel: (String) -> String? = { null }) {
         val i = queue.indexOf(r.key)
         return if (i < 0) null else i to queue.size - 1 - i
     }
+
+    /** Mika Live 实时语音对话在后台进行中:展开成胶囊。 */
+    private fun liveView(liveText: String?): CapsuleView.Shown? =
+        liveText?.let { CapsuleView.Shown(CapsuleKind.LiveVoice, it, pill = true) }
 
     /** 留在后台运行的那一页:展开成胶囊,说的是它来自的那个对话。 */
     private fun keptView(kept: KeptPage?): CapsuleView.Shown? =

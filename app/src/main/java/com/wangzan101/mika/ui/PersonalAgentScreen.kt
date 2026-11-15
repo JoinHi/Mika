@@ -1,5 +1,6 @@
 package com.wangzan101.mika.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wangzan101.mika.R
+import com.wangzan101.mika.core.personal.PersonalAgent
 import com.wangzan101.mika.core.personal.PersonalTask
 import com.wangzan101.mika.core.personal.PersonalSystemException
 import com.wangzan101.mika.personal.displayText
@@ -58,6 +60,7 @@ import com.wangzan101.mika.personal.displayResult
 import com.wangzan101.mika.personal.personalSystemText
 import com.wangzan101.mika.personal.personalStopErrorText
 import com.wangzan101.mika.memory.MemoryRuntime
+import com.wangzan101.mika.personal.LiveScreenStageState
 import com.wangzan101.mika.personal.PersonalPhonePreview
 import com.wangzan101.mika.personal.PersonalRuntime
 import com.wangzan101.mika.ui.components.ActivitySizedDialog
@@ -112,6 +115,7 @@ fun PersonalAgentScreen(
     onPickSpeech: () -> Unit,
 ) {
     val state by runtime.state.collectAsState()
+    val liveState by runtime.live.uiState.collectAsState()
     val actionError by runtime.error.collectAsState()
     val c = MikaTheme.colors
     val reduceMotion = MikaTheme.reduceMotion
@@ -120,6 +124,10 @@ fun PersonalAgentScreen(
     var draft by rememberSaveable { mutableStateOf("") }
     var voiceHolding by remember { mutableStateOf(false) }
     var profile by rememberSaveable { mutableStateOf(false) }
+    var showLiveSettings by rememberSaveable { mutableStateOf(false) }
+    var typingInLive by rememberSaveable { mutableStateOf(false) }
+    var showChatInLive by rememberSaveable { mutableStateOf(false) }
+    var touchOperateInLive by rememberSaveable { mutableStateOf(true) }
     var selectedTask by rememberSaveable { mutableStateOf<String?>(null) }
     var replayTask by rememberSaveable { mutableStateOf<String?>(null) }
     var openingPreview by remember { mutableStateOf<PersonalPhonePreview?>(null) }
@@ -140,6 +148,13 @@ fun PersonalAgentScreen(
     val active = state.tasks.filterNot { it.terminal }
     val activeIds = active.map { it.conversationId }
     val phonePreview = remember(runtime, activeIds) { runtime.phonePreview(activeIds) }
+    val liveStageFlow = remember(runtime, activeIds) { runtime.liveScreenStage(activeIds) }
+    val liveStage by liveStageFlow.collectAsState(initial = LiveScreenStageState())
+    val pendingLiveConfirmFlow = remember(runtime, activeIds) { runtime.livePendingConfirmation(activeIds) }
+    val pendingLiveConfirm by pendingLiveConfirmFlow.collectAsState(initial = null)
+    val hasLiveScreenActivity = liveStage.frame != null || liveStage.isPreparing
+    var prevLiveScreenActivity by remember { mutableStateOf(false) }
+    var lastSeenActionSeq by remember { mutableLongStateOf(liveStage.actionSeq) }
     val zone = remember { ZoneId.systemDefault() }
     val dayFormat = personalDayFormat()
     val context = LocalContext.current
@@ -173,75 +188,217 @@ fun PersonalAgentScreen(
         previousComposerHeight = composerHeight
         if (growth > 0 && followLatest && !list.isScrollInProgress) list.scrollBy(growth.toFloat())
     }
+    LaunchedEffect(liveState.phase.isRunning) {
+        if (!liveState.phase.isRunning) {
+            typingInLive = false
+            showChatInLive = false
+            touchOperateInLive = true
+        } else {
+            touchOperateInLive = true
+        }
+    }
+    LaunchedEffect(hasLiveScreenActivity, liveStage.actionSeq, liveState.phase.isRunning) {
+        val newAction = liveStage.actionSeq != lastSeenActionSeq
+        lastSeenActionSeq = liveStage.actionSeq
+        if (liveState.phase.isRunning && !typingInLive &&
+            ((hasLiveScreenActivity && !prevLiveScreenActivity) || newAction)
+        ) {
+            showChatInLive = false
+        }
+        prevLiveScreenActivity = hasLiveScreenActivity
+    }
+    val showingLiveStage = liveState.phase.isRunning && !typingInLive && !showChatInLive
+    val stageInput = liveStage.pipInput.takeIf { liveStage.frame?.isRecycled == false }
+    val liveTouchInteractive = showingLiveStage && touchOperateInLive && stageInput != null
+    DisposableEffect(stageInput, liveTouchInteractive) {
+        if (liveTouchInteractive) stageInput?.onInteractiveChanged(true)
+        onDispose {
+            if (liveTouchInteractive) stageInput?.onInteractiveChanged(false)
+        }
+    }
+    val canStageHandleBack = touchOperateInLive && stageInput != null
+    BackHandler(enabled = liveState.phase.isRunning && (typingInLive || showChatInLive || canStageHandleBack)) {
+        when {
+            typingInLive -> {
+                keyboard?.hide()
+                typingInLive = false
+            }
+            showChatInLive -> {
+                showChatInLive = false
+            }
+            stageInput != null -> {
+                scope.launch { stageInput.back() }
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding().testTag("personal-screen")) {
-        PersonalHeader(
-            active, phonePreview, onOpenDrawer, { profile = true }, { selectedTask = it.id },
-            onOpenPreview = { preview ->
-                openingPreview = preview
-                replayTask = preview.conversationId
-            },
-        )
-        Box(Modifier.weight(1f).fillMaxWidth().voiceDim(voiceHolding, reduceMotion)) {
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("personal-timeline"),
-                contentPadding = PaddingValues(horizontal = MikaSpace.Page, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (messages.isEmpty()) item("welcome") {
-                    Column(Modifier.fillMaxWidth().padding(top = 60.dp, bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(stringResource(R.string.personal_welcome_title), style = MikaType.LargeTitle, color = c.ink, textAlign = TextAlign.Center)
-                        Text(stringResource(R.string.personal_welcome_body),
-                            Modifier.padding(top = 12.dp), color = c.ink2, style = MikaType.Body, textAlign = TextAlign.Center)
-                        TextButton(onClick = onModels, Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.personal_view_model)) }
+        if (liveState.phase.isRunning) {
+            PersonalLiveCallTopBar(
+                live = runtime.live,
+                liveState = liveState,
+                stage = liveStage,
+                activeTasks = active,
+                showingChat = typingInLive || showChatInLive,
+                touchOperate = touchOperateInLive,
+                onOpenDrawer = onOpenDrawer,
+                onOpenActivity = { profile = true },
+                onOpenTask = { selectedTask = it.id },
+                onToggleChat = {
+                    if (typingInLive) {
+                        keyboard?.hide()
+                        typingInLive = false
+                        showChatInLive = false
+                    } else {
+                        showChatInLive = !showChatInLive
                     }
-                }
-                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
-                    val date = Instant.ofEpochMilli(message.at).atZone(zone).toLocalDate()
-                    val priorDate = messages.getOrNull(index - 1)?.let {
-                        Instant.ofEpochMilli(it.at).atZone(zone).toLocalDate()
-                    }
-                    val task = message.taskId?.let { id -> state.tasks.find { it.id == id } }
-                    val user = message.role == "user"
-                    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
-                        if (date != priorDate) {
-                            Text(dayFormat.format(date), Modifier.align(Alignment.CenterHorizontally).padding(vertical = 8.dp),
-                                color = c.ink3, fontSize = 11.sp)
-                            Spacer(Modifier.height(12.dp))
-                        }
-                        if (task != null) Text(task.title + " · " + personalStatus(task),
-                            Modifier.padding(start = 4.dp, bottom = 6.dp), fontSize = 10.sp, color = c.ink2)
-                        val bubble = Modifier.fillMaxWidth(if (user) 0.8f else 1f)
-                            .wrapContentWidth(if (user) Alignment.End else Alignment.Start)
-                            .background(if (user) c.accent else c.answer, if (user) MikaShapes.UserBubble else MikaShapes.AnswerBubble)
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                        if (user) {
-                            Text(message.text, bubble, style = MikaType.Body, color = c.onAccent)
-                        } else {
-                            MarkdownText(message.displayText(context), MikaType.Body.copy(color = if (message.error) c.bad else c.ink), bubble)
-                        }
-                        if (!message.handled) Text(stringResource(R.string.personal_received), Modifier.padding(top = 4.dp, end = 5.dp), fontSize = 10.sp, color = c.ink3)
-                        if (task != null) TextButton(onClick = { selectedTask = task.id }) { Text(stringResource(R.string.personal_view_task), fontSize = 12.sp) }
-                    }
-                }
-                item("bottom") { Spacer(Modifier.height(4.dp)) }
-            }
-            if (!followLatest && messages.isNotEmpty()) TextButton(
-                onClick = { followLatest = true; scope.launch { list.scrollToItem(messages.size) } },
-                modifier = Modifier.align(Alignment.BottomCenter).background(c.surface, CircleShape)) { Text(stringResource(R.string.personal_latest)) }
+                },
+                onToggleTouchOperate = { touchOperateInLive = !touchOperateInLive },
+                onOpenLiveSettings = { showLiveSettings = true },
+            )
+        } else {
+            PersonalHeader(
+                active, phonePreview, onOpenDrawer, { profile = true }, { selectedTask = it.id },
+                onOpenPreview = { preview ->
+                    openingPreview = preview
+                    replayTask = preview.conversationId
+                },
+                trailing = {
+                    PersonalLiveLauncherPill(
+                        live = runtime.live,
+                        state = liveState,
+                        onOpenSettings = { showLiveSettings = true },
+                    )
+                },
+            )
         }
-        Composer(
-            modifier = Modifier.onSizeChanged { composerHeight = it.height }.testTag("personal-composer"),
-            text = draft,
-            onText = { draft = it },
-            mode = ComposerMode.Idle,
-            hasHistory = messages.isNotEmpty(),
-            onSend = ::send,
-            onStop = {},
-            reduceMotion = reduceMotion,
-            voice = voice,
-            onVoiceText = { draft = HoldToTalk.join(draft, it) },
-            onPickSpeech = onPickSpeech,
-            onVoiceHolding = { voiceHolding = it },
-            sendFromIme = true,
+        Box(Modifier.weight(1f).fillMaxWidth().voiceDim(voiceHolding, reduceMotion)) {
+            if (showingLiveStage) {
+                PersonalLiveScreenStage(
+                    stage = liveStage,
+                    liveState = liveState,
+                    activeTasks = active,
+                    touchOperate = touchOperateInLive,
+                    reduceMotion = reduceMotion,
+                    onWakeRetainedStage = { runtime.live.wakeRetainedStage() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("personal-timeline"),
+                    contentPadding = PaddingValues(horizontal = MikaSpace.Page, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (messages.isEmpty()) item("welcome") {
+                        Column(Modifier.fillMaxWidth().padding(top = 60.dp, bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(stringResource(R.string.personal_welcome_title), style = MikaType.LargeTitle, color = c.ink, textAlign = TextAlign.Center)
+                            Text(stringResource(R.string.personal_welcome_body),
+                                Modifier.padding(top = 12.dp), color = c.ink2, style = MikaType.Body, textAlign = TextAlign.Center)
+                            TextButton(onClick = onModels, Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.personal_view_model)) }
+                        }
+                    }
+                    itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
+                        val date = Instant.ofEpochMilli(message.at).atZone(zone).toLocalDate()
+                        val priorDate = messages.getOrNull(index - 1)?.let {
+                            Instant.ofEpochMilli(it.at).atZone(zone).toLocalDate()
+                        }
+                        val task = message.taskId?.let { id -> state.tasks.find { it.id == id } }
+                        val user = message.role == "user"
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
+                            if (date != priorDate) {
+                                Text(dayFormat.format(date), Modifier.align(Alignment.CenterHorizontally).padding(vertical = 8.dp),
+                                    color = c.ink3, fontSize = 11.sp)
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            if (task != null) Text(task.title + " · " + personalStatus(task),
+                                Modifier.padding(start = 4.dp, bottom = 6.dp), fontSize = 10.sp, color = c.ink2)
+                            val bubble = Modifier.fillMaxWidth(if (user) 0.8f else 1f)
+                                .wrapContentWidth(if (user) Alignment.End else Alignment.Start)
+                                .background(if (user) c.accent else c.answer, if (user) MikaShapes.UserBubble else MikaShapes.AnswerBubble)
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                            if (user) {
+                                Text(message.text, bubble, style = MikaType.Body, color = c.onAccent)
+                            } else {
+                                MarkdownText(message.displayText(context), MikaType.Body.copy(color = if (message.error) c.bad else c.ink), bubble)
+                            }
+                            if (!message.handled) Text(stringResource(R.string.personal_received), Modifier.padding(top = 4.dp, end = 5.dp), fontSize = 10.sp, color = c.ink3)
+                            if (task != null) TextButton(onClick = { selectedTask = task.id }) { Text(stringResource(R.string.personal_view_task), fontSize = 12.sp) }
+                        }
+                    }
+                    item("bottom") { Spacer(Modifier.height(4.dp)) }
+                }
+                if (!followLatest && messages.isNotEmpty()) TextButton(
+                    onClick = { followLatest = true; scope.launch { list.scrollToItem(messages.size) } },
+                    modifier = Modifier.align(Alignment.BottomCenter).background(c.surface, CircleShape)) { Text(stringResource(R.string.personal_latest)) }
+            }
+        }
+        if (liveState.phase.isRunning) {
+            pendingLiveConfirm?.let { confirmPrompt ->
+                key(confirmPrompt.promptKey) {
+                    LiveConfirmationCard(
+                        prompt = confirmPrompt,
+                        onApprove = { runtime.live.approveConfirmationFromUi(confirmPrompt) },
+                        onDecline = { runtime.live.declineConfirmationFromUi(confirmPrompt) },
+                    )
+                }
+            }
+        }
+        if (liveState.phase.isRunning && !typingInLive) {
+            PersonalLiveBar(
+                state = liveState,
+                reduceMotion = reduceMotion,
+                onToggleMute = runtime.live::toggleMute,
+                onShareScreen = runtime.live::shareMainScreenNow,
+                onSwitchToKeyboard = { typingInLive = true },
+                onOpenSettings = { showLiveSettings = true },
+                onDismissHint = runtime.live::clearError,
+                onHangup = { runtime.live.stop() },
+                onToggleTurbo = runtime.live::toggleTurboControl,
+                showSubtitlesInline = !showingLiveStage,
+                modifier = Modifier.onSizeChanged { composerHeight = it.height },
+            )
+        } else {
+            Column(Modifier.fillMaxWidth().onSizeChanged { composerHeight = it.height }) {
+                if (liveState.phase.isRunning && typingInLive) {
+                    PersonalLiveCompactBanner(
+                        state = liveState,
+                        onBackToVoiceBar = {
+                            keyboard?.hide()
+                            typingInLive = false
+                        },
+                        onToggleMute = runtime.live::toggleMute,
+                        onHangup = { runtime.live.stop() },
+                        onToggleTurbo = runtime.live::toggleTurboControl,
+                    )
+                } else if (!liveState.statusHint.isNullOrBlank()) {
+                    LiveHintChip(
+                        text = liveState.statusHint.orEmpty(),
+                        onDismiss = runtime.live::clearError,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                }
+                Composer(
+                    modifier = Modifier.testTag("personal-composer"),
+                    text = draft,
+                    onText = { draft = it },
+                    mode = ComposerMode.Idle,
+                    hasHistory = messages.isNotEmpty(),
+                    onSend = ::send,
+                    onStop = {},
+                    reduceMotion = reduceMotion,
+                    voice = if (liveState.phase.isRunning) null else voice,
+                    onVoiceText = { draft = HoldToTalk.join(draft, it) },
+                    onPickSpeech = onPickSpeech,
+                    onVoiceHolding = { voiceHolding = it },
+                    sendFromIme = true,
+                )
+            }
+        }
+    }
+    if (showLiveSettings) {
+        PersonalLiveSettingsSheet(
+            live = runtime.live,
+            state = liveState,
+            onDismiss = { showLiveSettings = false },
+            onOpenModels = onModels,
         )
     }
     if (profile) {
@@ -267,15 +424,24 @@ fun PersonalAgentScreen(
     }
     replayTask?.let { id ->
         key(id) {
-            PersonalReplayDialog(runtime, id, id in activeIds, openingPreview?.frame) {
+            PersonalReplayDialog(runtime, id, id in activeIds || id == PersonalAgent.MAIN_CONVERSATION_ID, openingPreview?.frame) {
                 replayTask = null
                 openingPreview = null
             }
         }
     }
     val actionErrorText = actionError?.let { personalStopErrorText(context, it) }
-    (sendError ?: actionErrorText)?.let { error -> AlertDialog(onDismissRequest = { sendError = null; runtime.clearError() }, text = { Text(error) },
-        confirmButton = { TextButton(onClick = { sendError = null; runtime.clearError() }) { Text(stringResource(R.string.personal_ok)) } }) }
+    (sendError ?: actionErrorText ?: liveState.errorMessage)?.let { error ->
+        AlertDialog(
+            onDismissRequest = { sendError = null; runtime.clearError(); runtime.live.clearError() },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = { sendError = null; runtime.clearError(); runtime.live.clearError() }) {
+                    Text(stringResource(R.string.personal_ok))
+                }
+            },
+        )
+    }
 }
 
 internal enum class PersonalProfileTab(val label: Int, val icon: ImageVector) {
@@ -445,17 +611,22 @@ internal fun PersonalHeader(
     onActivity: () -> Unit,
     onTask: (PersonalTask) -> Unit,
     onOpenPreview: (PersonalPhonePreview) -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = MikaTheme.colors
     val latestPreview by phonePreview.collectAsState(initial = null)
     val context = LocalContext.current
     val preview = latestPreview
     val previewTask = active.firstOrNull { it.conversationId == preview?.conversationId }
-    val frame = preview?.frame?.takeUnless { previewTask == null || it.isRecycled }
+    val isDirectLivePreview = preview?.conversationId == PersonalAgent.MAIN_CONVERSATION_ID
+    val frame = preview?.frame?.takeUnless { (previewTask == null && !isDirectLivePreview) || it.isRecycled }
     val previewWidth = frame?.let { minOf(76.dp, 104.dp * (it.width.toFloat() / it.height)) } ?: 0.dp
     Box(Modifier.fillMaxWidth().padding(horizontal = MikaSpace.Page, vertical = 6.dp)) {
         Box(Modifier.align(Alignment.TopStart).padding(top = 4.dp)) {
             BarIconButton(MikaIcons.Menu, stringResource(R.string.personal_open_sidebar), onOpenDrawer)
+        }
+        trailing?.let {
+            Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp)) { it() }
         }
         Column(Modifier.align(Alignment.TopCenter).widthIn(max = 250.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {

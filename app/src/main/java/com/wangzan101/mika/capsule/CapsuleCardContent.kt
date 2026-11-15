@@ -191,7 +191,14 @@ interface CardActions {
     fun cancelQuit() {}
     /** 退出确认里的「退出」:真正完全退出 Mika。 */
     fun quit() {}
+    /** Mika Live 后台通话中:静音切换、发送当前主屏、挂断。 */
+    fun toggleLiveMute() {}
+    fun shareLiveScreen() {}
+    fun stopLive() {}
 }
+
+/** Mika Live 在后台运行时展示在展开卡片里的控制条状态。 */
+data class CapsuleLiveUi(val label: String, val muted: Boolean)
 
 /** 截下来、挂在输入框上面等着发的一屏:[thumb] 是缩略图(不让截图的页面没有)。 */
 data class PendingScreen(val shot: CapturedScreen, val thumb: ImageBitmap?)
@@ -240,6 +247,7 @@ fun CapsuleCard(
     /** 这个对话明确排队、还没开始的件数;卡片上显示一行,点它到对话页管理。 */
     queuedCount: Int = 0,
     onQueued: (() -> Unit)? = null,
+    liveUi: CapsuleLiveUi? = null,
 ) {
     val field = CapsuleCards.input(card)
     // 任务还在进行(干活中、Mika 问你、等条件)时,停止和对话页一样放在输入框右边,不另占一个按钮
@@ -251,6 +259,7 @@ fun CapsuleCard(
         report(Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt()))
     }
     val inputRow: @Composable () -> Unit = {
+        liveUi?.let { LiveCapsuleStrip(it, actions) }
         field?.let { InputRow(it, input, actions, stop = stopKey?.let { k -> { actions.stop(k) } }) }
     }
     Box(modifier.padding(CapsuleShadowRoom)) {
@@ -258,7 +267,7 @@ fun CapsuleCard(
             zoomed && preview != null -> Zoomed(preview, actions)
             card is CardView.Detail -> Detail(card, preview, actions, elapsed, h, handle, inputRow, queuedCount, onQueued)
             card is CardView.Chat -> ChatCard(card, thread, actions, elapsed, h, handle, inputRow, queuedCount, onQueued)
-            card is CardView.Kept -> KeptCard(card, preview, actions, h, handle)
+            card is CardView.Kept -> KeptCard(card, preview, actions, h, handle, liveUi)
         }
     }
 }
@@ -505,6 +514,58 @@ private fun CapsuleModePill(value: FollowUpMode, selected: FollowUpMode, onMode:
     }
 }
 
+/** Mika Live 在后台进行时展开卡片里的快捷控制条:静音、发当前主屏、挂断。 */
+@Composable
+private fun LiveCapsuleStrip(live: CapsuleLiveUi, actions: CardActions) {
+    val c = MikaTheme.colors
+    val muteLabel = tr(if (live.muted) R.string.live_action_unmute else R.string.live_action_mute)
+    val shareLabel = tr(R.string.live_action_share_screen)
+    val hangupLabel = tr(R.string.live_action_hangup)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(14.dp)).background(c.okSoft)
+            .padding(horizontal = 10.dp, vertical = 6.dp).testTag("capsule-live-strip"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(Modifier.size(8.dp).background(c.ok, MikaShapes.Pill))
+        Text(
+            live.label,
+            Modifier.weight(1f),
+            style = Strong.copy(fontSize = 12.5.sp),
+            color = c.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(
+            Modifier.size(30.dp).clip(MikaShapes.Pill)
+                .background(if (live.muted) c.warnSoft else c.surface.copy(alpha = 0.72f))
+                .clickable(role = Role.Button, onClickLabel = muteLabel, onClick = actions::toggleLiveMute)
+                .semantics { contentDescription = muteLabel },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(if (live.muted) MikaIcons.Mute else MikaIcons.Mic, null, Modifier.size(16.dp), tint = if (live.muted) c.warn else c.ink)
+        }
+        Box(
+            Modifier.size(30.dp).clip(MikaShapes.Pill)
+                .background(c.surface.copy(alpha = 0.72f))
+                .clickable(role = Role.Button, onClickLabel = shareLabel, onClick = actions::shareLiveScreen)
+                .semantics { contentDescription = shareLabel },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(MikaIcons.Camera, null, Modifier.size(16.dp), tint = c.ink)
+        }
+        Box(
+            Modifier.size(30.dp).clip(MikaShapes.Pill)
+                .background(c.badSoft)
+                .clickable(role = Role.Button, onClickLabel = hangupLabel, onClick = actions::stopLive)
+                .semantics { contentDescription = hangupLabel },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(MikaIcons.Close, null, Modifier.size(15.dp), tint = c.bad)
+        }
+    }
+}
+
 /** 胶囊卡片底部的一行「排队中 N 件」;点它到对话页管理。 */
 @Composable
 private fun QueuedLine(count: Int, onClick: (() -> Unit)?) {
@@ -703,7 +764,7 @@ private fun Detail(
  * 站点和来自哪个对话,下面「打开对话」「关闭网页」。按内容高。剩下的时间每分钟走一次。
  */
 @Composable
-private fun KeptCard(card: CardView.Kept, preview: Bitmap?, actions: CardActions, height: Dp, handle: Modifier) {
+private fun KeptCard(card: CardView.Kept, preview: Bitmap?, actions: CardActions, height: Dp, handle: Modifier, liveUi: CapsuleLiveUi? = null) {
     val c = MikaTheme.colors
     val p = card.page
     val now by produceState(System.currentTimeMillis(), p.id) {
@@ -733,6 +794,7 @@ private fun KeptCard(card: CardView.Kept, preview: Bitmap?, actions: CardActions
                 style = Sub, color = c.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
         }
+        liveUi?.let { LiveCapsuleStrip(it, actions) }
         Row(Modifier.padding(top = 12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.weight(1f).testTag("kept-open")) { Action(tr(R.string.kept_open_chat), ButtonKind.Tonal) { actions.openMika(p.conversationId) } }
             // 关闭是红字的淡红按钮,和别的按钮分开

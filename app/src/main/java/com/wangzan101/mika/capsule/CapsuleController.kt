@@ -44,6 +44,8 @@ import com.wangzan101.mika.core.assembly.knownTools
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.userscreen.CapturedScreen
 import com.wangzan101.mika.core.userscreen.UserScreenMessage
+import com.wangzan101.mika.personal.live.LiveSessionPhase
+import com.wangzan101.mika.personal.live.PersonalLiveUiState
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.task.DeviceStateWatcher
 import com.wangzan101.mika.task.TaskCenterState
@@ -274,7 +276,9 @@ class CapsuleController(
                 keeper.page,
                 // 主动能力判为值得提醒、还没看的条数(只要个数)
                 com.wangzan101.mika.proactive.NoticeHintList.unseenCount(context),
-            ) { s, _, kept, notices -> s.copy(kept = kept, notices = notices) }.collect(::render)
+            ) { s, _, kept, notices -> s.copy(kept = kept, notices = notices) }
+                .combine((context.applicationContext as MikaApp).personal.live.uiState) { s, live -> s.copy(liveState = live) }
+                .collect(::render)
         }
         // 说话面板出来时铺满整屏(压暗背后),收起时显式收掉(见 [syncPanelWindow])
         scope.launch { snapshotFlow { talk.active }.collect { syncPanelWindow() } }
@@ -344,6 +348,7 @@ class CapsuleController(
         val cardScale: CapsuleCardScale = CapsuleCardScale.DEFAULT,
         val hideAtEdge: Boolean = false,
         val fullscreen: Boolean = false,
+        val liveState: PersonalLiveUiState? = null,
     )
 
     /**
@@ -397,7 +402,7 @@ class CapsuleController(
         val inputs = CapsuleInputs(
             s.runs, s.mode, s.mikaInForeground, screenInteractive = !s.locked,
             serviceAvailable = service != null && service !== failedOn, cardOpen = expanded, kept = s.kept, fullscreen = s.fullscreen,
-            notices = s.notices,
+            notices = s.notices, liveText = liveCapsuleText(s.liveState),
         )
         val shown = model.update(inputs, System.currentTimeMillis()) as? CapsuleView.Shown
         schedule(model.nextChangeAt)
@@ -661,7 +666,7 @@ class CapsuleController(
         val v = view ?: return
         if (capturing) return
         scope.launch {
-            if (v.kind == CapsuleKind.Idle || v.kind == CapsuleKind.Notice) idle = loadIdle()
+            if (v.kind == CapsuleKind.Idle || v.kind == CapsuleKind.Notice || v.kind == CapsuleKind.LiveVoice) idle = loadIdle()
             val target = CapsuleCards.of(model.cardRuns(), follow, idle)
             val kind = target?.let(CapsuleCards::input)?.kind
             if (target == null || kind == null) {
@@ -728,6 +733,60 @@ class CapsuleController(
         } finally {
             capturing = false
         }
+    }
+
+    /**
+     * Mika Live 实时语音对话请求截取当前主屏(口头调用工具或胶囊/控制栏手动点按):
+     * 若悬浮胶囊窗口当前正显示则走 [captureScreen] 隐藏浮层并闪烁提示;若胶囊关闭(如设置从不显示)则直接经无障碍截取,
+     * 同样遵守 [AppAccessStore] 共享名单、Mika 前台过滤与防截屏黑屏检测。
+     */
+    suspend fun captureMainScreenForLive(): CapturedScreen? = withContext(Dispatchers.Main.immediate) {
+        if (capturing) return@withContext null
+        if (windowOn != null && window != null && cardWindow != null) {
+            return@withContext captureScreen()
+        }
+        val service = ScreenAccessibility.instance.value ?: return@withContext null
+        capturing = true
+        try {
+            val store = (context.applicationContext as MikaApp).appAccess
+            val sources = MainScreenCapture.sourcePackages(service) ?: return@withContext null
+            if (context.packageName in sources || !store.current().available) return@withContext null
+            for (pkg in sources) {
+                if (!store.current().canShare(pkg) && !com.wangzan101.mika.cap.phone.a11y.requestScreenShare(service, store, pkg, appLabel(pkg))) {
+                    return@withContext null
+                }
+            }
+            val capture = if (MainScreenCapture.sourcePackages(service) != sources || sources.any { !store.current().canShare(it) }) null
+            else MainScreenCapture.shoot(service)
+            val (shot, read) = capture ?: return@withContext null
+            if (MainScreenCapture.sourcePackages(service) != sources || sources.any { !store.current().canShare(it) }) {
+                (shot as? ScreenAccessibility.MainShot.Ok)?.bitmap?.recycle()
+                return@withContext null
+            }
+            val area = service.overlays().area()
+            val r = MainScreenCapture.build(service, shot, read, area.insetTop, area.insetBottom) { ConfirmationNotifier.appLabel(context, it) }
+            if (sources.any { !store.current().canShare(it) } || MainScreenCapture.sourcePackages(service) != sources) return@withContext null
+            val captured = (r as? MainScreenCapture.Result.Captured)?.shot ?: return@withContext null
+            CapturedScreen(captured.jpeg, captured.screen, sources)
+        } finally {
+            capturing = false
+        }
+    }
+
+    private fun liveCapsuleText(state: PersonalLiveUiState?): String? {
+        val st = state?.takeIf { it.phase.isRunning } ?: return null
+        val status = when (st.phase) {
+            LiveSessionPhase.Connecting -> tr(R.string.live_status_connecting)
+            LiveSessionPhase.Reconnecting -> tr(R.string.live_status_reconnecting)
+            LiveSessionPhase.SuspendedByCall -> tr(R.string.live_status_suspended_call)
+            LiveSessionPhase.Active -> when {
+                st.muted -> tr(R.string.live_status_muted)
+                st.speaking -> tr(R.string.live_status_speaking)
+                else -> tr(R.string.live_status_listening)
+            }
+            LiveSessionPhase.Idle, LiveSessionPhase.Error -> return null
+        }
+        return "${tr(R.string.live_capsule_title)} · $status"
     }
 
     /**
@@ -1113,8 +1172,9 @@ class CapsuleController(
 
     // ---------- 长按说话 ----------
 
-    /** 此刻能不能在胶囊上说话:有面板窗口、不是「你来处理」那一条、语音输入没设成不用。 */
+    /** 此刻能不能在胶囊上说话:有面板窗口、不是「你来处理」那一条、语音输入没设成不用,且 Mika Live 未在全双工占用麦克风。 */
     private fun canTalk(): Boolean = panelWindow != null && !isBar() && !edgeHidden &&
+        !(context.applicationContext as MikaApp).personal.live.isSessionActive &&
         (context.applicationContext as MikaApp).speech.choice.value != SpeechChoice.Off
 
     /** 一颗那个窗口交来的长按:开始说、手指移动算落点、松开按落点收尾。 */
@@ -1295,7 +1355,7 @@ class CapsuleController(
             }
             return
         }
-        if (v.kind == CapsuleKind.Idle) {
+        if (v.kind == CapsuleKind.Idle || v.kind == CapsuleKind.LiveVoice) {
             openIdle()
             return
         }
@@ -1420,6 +1480,16 @@ class CapsuleController(
             flags.setCapsuleMode(CapsuleMode.Off)
             android.widget.Toast.makeText(context, CardCopy.hiddenHint(), android.widget.Toast.LENGTH_LONG).show()
         }
+        override fun toggleLiveMute() {
+            (context.applicationContext as MikaApp).personal.live.toggleMute()
+        }
+        override fun shareLiveScreen() {
+            collapse()
+            (context.applicationContext as MikaApp).personal.live.shareMainScreenNow()
+        }
+        override fun stopLive() {
+            (context.applicationContext as MikaApp).personal.live.stop()
+        }
     }
 
     /** 卡片窗口里:展开时是卡片,收起时窗口先显式隐藏、内容随后清空。标题栏的电源按钮点过时换成退出的确认。
@@ -1427,6 +1497,8 @@ class CapsuleController(
     @Composable
     private fun CardOverlay() {
         val c = card ?: return
+        val liveState = last?.liveState
+        val liveUi = liveCapsuleText(liveState)?.let { CapsuleLiveUi(it, liveState?.muted == true) }
         MikaTheme(reduceMotion = animationsOff(context)) {
             val scale = last?.cardScale ?: CapsuleCardScale.DEFAULT
             CompositionLocalProvider(
@@ -1445,6 +1517,7 @@ class CapsuleController(
                             followUps.count { it.conversationId == id && !it.claimed && it.source == com.wangzan101.mika.task.QueuedSource.Explicit }
                         } ?: 0,
                         onQueued = { CapsuleCards.conversationOf(c)?.let(::open) },
+                        liveUi = liveUi,
                     )
                 }
             }

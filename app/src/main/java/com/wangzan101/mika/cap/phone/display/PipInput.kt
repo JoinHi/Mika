@@ -14,4 +14,21 @@ interface PipInput {
 
     /** 在虚拟屏上按一次返回键。 */
     suspend fun back()
+
+    /**
+     * 实时流式注入一次单指或多指触摸事件([action] 为 [android.view.MotionEvent] 动作掩码与指针索引组合,
+     * [normXs]/[normYs] 为相对画面的 0..1 归一化坐标)。
+     * 返回 false 表示底层不支持实时流式注入(例如旧版助手进程),调用方自动回退到 [tap] / [swipe]。
+     */
+    fun injectTouch(
+        action: Int,
+        downTime: Long,
+        eventTime: Long,
+        pointerIds: IntArray,
+        normXs: FloatArray,
+        normYs: FloatArray,
+    ): Boolean = false
+
+    /** 界面进入或退出实时触控状态,供底层动态切换高帧率高清预览(720p@30fps ↔ 后台省电档)。 */
+    fun onInteractiveChanged(interactive: Boolean) {}
 }

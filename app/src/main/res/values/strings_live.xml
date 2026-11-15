@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">Switch to another app first or check Accessibility screen access to share your screen.</string>
     <string name="live_hint_idle_hangup">Mika Live ended automatically after 3 minutes of silence.</string>
 
-    <string name="live_hint_turbo_on">⚡ Turbo mode enabled (waits skipped + direct voice control)</string>
-    <string name="live_hint_turbo_off">Standard baseline enabled (human pacing + background tasks)</string>
     <string name="live_hint_direct_elapsed">⚡ Direct control · %1$d steps in %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Turbo task finished in %1$ss</string>
-    <string name="live_hint_task_standard_elapsed">Standard baseline finished in %1$ss</string>
-    <string name="live_mode_turbo_badge">Turbo</string>
-    <string name="live_mode_standard_badge">Standard</string>
-    <string name="live_mode_turbo_summary">Waits bypassed · direct voice control</string>
-    <string name="live_mode_standard_summary">Human pacing · background task baseline</string>
-    <string name="live_settings_turbo_title">Turbo phone control (A/B compare)</string>
-    <string name="live_settings_turbo_desc">Shortens settle waits for Live direct control and enables low-latency Gemini Live phone actions. Turn off to compare against standard background tasks.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ Task finished in %1$ss</string>
 
     <string name="live_stage_idle_title">Live virtual screen ready</string>
     <string name="live_stage_idle_body">Speak any app or action to Mika and the live virtual screen will fill this stage in real time.</string>

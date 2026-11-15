@@ -24,6 +24,7 @@ import com.wangzan101.mika.core.live.GeminiLiveEvent
 import com.wangzan101.mika.core.live.GeminiLiveProtocol
 import com.wangzan101.mika.core.live.GeminiLiveSetup
 import com.wangzan101.mika.core.live.LiveAsyncEvent
+import com.wangzan101.mika.core.live.LiveDirectDecision
 import com.wangzan101.mika.core.live.LiveFunctionCall
 import com.wangzan101.mika.core.live.LiveFunctionResponse
 import com.wangzan101.mika.core.live.LiveRealtimeSession
@@ -109,7 +110,6 @@ data class PersonalLiveUiState(
     val providerConfigured: Boolean = false,
     val selectedModel: String = GeminiLiveProtocol.DEFAULT_MODEL,
     val selectedVoice: String = GeminiLiveProtocol.DEFAULT_VOICE,
-    val turboControl: Boolean = true,
 ) {
     fun toSignalSnapshot(): LiveTurnSignalSnapshot = LiveTurnSignalSnapshot(
         sessionActive = phase == LiveSessionPhase.Active,
@@ -356,11 +356,10 @@ class PersonalLiveRuntime internal constructor(
     /**
      * 当前语音直控会话（`LiveDirectPhoneController`）生效的纯等待时间配置：
      * - 仅影响语音直控虚拟屏自身的稳定窗口与打字/手势节奏，绝不污染普通聊天或定时后台 `TaskRun`；
-     * - 关闭 `turboControl` 或挂断语音时回退为 [PhoneWaitProfile.STANDARD]。
+     * - 挂断语音后自动回退为 [PhoneWaitProfile.STANDARD]。
      */
     fun effectiveWaitProfile(): PhoneWaitProfile =
-        if (isSessionActive) PhoneWaitProfile.forTurbo(settings.state.value.turboControl)
-        else PhoneWaitProfile.STANDARD
+        if (isSessionActive) PhoneWaitProfile.TURBO else PhoneWaitProfile.STANDARD
 
     @Volatile private var touchCoordinatorRef: LiveUserTouchCoordinator? = null
 
@@ -403,6 +402,8 @@ class PersonalLiveRuntime internal constructor(
             touchCoordinator.onDiscreteAction(captureAfterSettle = capture)
         },
         waitProfileProvider = { effectiveWaitProfile() },
+        decisionModelProvider = { app.tasks.decisionModel(app) },
+        userUtteranceProvider = { currentTurnUtteranceSnapshot() ?: recentUserQuotes.peekLast() },
     )
     val directPhonePreview: StateFlow<Bitmap?> get() = directPhone.previewFrames
     val directPhonePipInput: StateFlow<PipInput?> get() = directPhone.pipInput
@@ -481,6 +482,7 @@ class PersonalLiveRuntime internal constructor(
             touchInteraction()
             turnCoordinator.onUserSpeechActivity()
             directPhone.onNewUserTurn()
+            recordTurnUserUtterance(clean)
             recordRecentUserQuote(clean)
         },
         onActiveDelivered = { clean ->
@@ -493,6 +495,8 @@ class PersonalLiveRuntime internal constructor(
 
     private val userTurnBuffer = StringBuilder()
     private val assistantTurnBuffer = StringBuilder()
+    private var currentTurnUserUtterance: String? = null
+    private var currentTurnIntentAssessed: Boolean = false
     private var unansweredUserTurnText: String? = null
     private var unansweredTurnAtMs: Long = 0L
     private val unansweredToolSummaries = ArrayList<String>()
@@ -513,7 +517,6 @@ class PersonalLiveRuntime internal constructor(
                         providerConfigured = ready,
                         selectedModel = cfg.model,
                         selectedVoice = cfg.voiceName,
-                        turboControl = cfg.turboControl,
                     )
                 }
             }
@@ -598,6 +601,8 @@ class PersonalLiveRuntime internal constructor(
         synchronized(this) {
             userTurnBuffer.setLength(0)
             assistantTurnBuffer.setLength(0)
+            currentTurnUserUtterance = null
+            currentTurnIntentAssessed = false
             unansweredUserTurnText = null
             unansweredTurnAtMs = 0L
             unansweredToolSummaries.clear()
@@ -674,29 +679,6 @@ class PersonalLiveRuntime internal constructor(
     }
 
     fun toggleMute() = setMuted(!_uiState.value.muted)
-
-    fun toggleTurboControl() = setTurboControl(!settings.state.value.turboControl)
-
-    fun setTurboControl(enabled: Boolean) {
-        if (settings.state.value.turboControl == enabled) return
-        settings.update { it.copy(turboControl = enabled) }
-        val hint = tr(if (enabled) R.string.live_hint_turbo_on else R.string.live_hint_turbo_off)
-        if (!enabled) {
-            scope.launch { directPhone.release() }
-        }
-        val sessionScope = activeSessionScope
-        if (isSessionActive && _uiState.value.phase != LiveSessionPhase.SuspendedByCall && sessionScope != null) {
-            resumptionHandle = null
-            resumptionHandleAtMs = 0L
-            flushPendingTranscripts()
-            runCatching { currentSession?.close() }
-            currentSession = null
-            _uiState.update { it.copy(turboControl = enabled, phase = LiveSessionPhase.Reconnecting, statusHint = hint, errorMessage = null) }
-            launchSessionLoop(sessionScope, isReconnect = true)
-        } else {
-            _uiState.update { it.copy(turboControl = enabled, statusHint = hint) }
-        }
-    }
 
     fun restartIfActive() {
         if (!isSessionActive) return
@@ -929,19 +911,17 @@ class PersonalLiveRuntime internal constructor(
                     resumptionHandleAtMs = 0L
                 }
 
-                val turbo = settings.state.value.turboControl
                 val searchEnabled = webSearchRunner.isSearchEnabled()
                 val systemPrompt = PersonalLiveTools.buildSystemPrompt(
                     state = agent.state.value,
                     memoryText = runCatching { agent.memorySnapshot() }.getOrDefault(""),
-                    turboControl = turbo,
                     searchEnabled = searchEnabled,
                 )
                 val setup = GeminiLiveSetup(
                     model = creds.model,
                     systemInstruction = systemPrompt,
                     voiceName = creds.voiceName,
-                    tools = PersonalLiveTools.toolsForMode(turboControl = turbo, searchEnabled = searchEnabled),
+                    tools = PersonalLiveTools.toolsForMode(searchEnabled = searchEnabled),
                     resumptionHandle = candidateHandle,
                     enableSlidingWindow = true,
                     enableTranscription = true,
@@ -1043,6 +1023,7 @@ class PersonalLiveRuntime internal constructor(
                             GeminiLiveEvent.Interrupted -> {
                                 turnCoordinator.onAssistantTurnBoundary()
                                 audioController.clearPlayback()
+                                clearCurrentTurnIntentState()
                                 if (commitAssistantTurnIfAny() || consumeAssistantEmittedFlag()) {
                                     clearPendingTurnRecovery()
                                 }
@@ -1082,6 +1063,7 @@ class PersonalLiveRuntime internal constructor(
                                 hadSessionTraffic = true
                                 turnCoordinator.onAssistantTurnBoundary()
                                 commitUserTurnIfAny()
+                                clearCurrentTurnIntentState()
                                 if (commitAssistantTurnIfAny() || consumeAssistantEmittedFlag()) {
                                     clearPendingTurnRecovery()
                                 }
@@ -1294,12 +1276,7 @@ class PersonalLiveRuntime internal constructor(
                     announcedWaitKeys.remove(done.id)
                     delegatedTaskStartedAt.remove(done.id)?.let { startedAt ->
                         val elapsedMs = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
-                        val hintRes = if (settings.state.value.turboControl) {
-                            R.string.live_hint_task_turbo_elapsed
-                        } else {
-                            R.string.live_hint_task_standard_elapsed
-                        }
-                        _uiState.update { it.copy(statusHint = tr(hintRes, formatSeconds(elapsedMs))) }
+                        _uiState.update { it.copy(statusHint = tr(R.string.live_hint_task_turbo_elapsed, formatSeconds(elapsedMs))) }
                     }
                     touchInteraction()
                     val outcome = done.result?.takeIf { it.isNotBlank() } ?: done.detail.ifBlank { done.status }
@@ -1350,6 +1327,9 @@ class PersonalLiveRuntime internal constructor(
             when (call.name) {
                 PersonalLiveTools.QUICK_PHONE_ACT_NAME -> {
                     val commands = call.args["commands"] as? JsonArray ?: JsonArray(emptyList())
+                    if (shouldBlockPhoneToolAsDiscussion(commands)) {
+                        return ExecutedToolStep(buildDiscussOnlyPayload(), null)
+                    }
                     if (app.taskState.runs.value.isNotEmpty()) {
                         preemptRunningPhoneTasks()
                     }
@@ -1382,13 +1362,16 @@ class PersonalLiveRuntime internal constructor(
                     )
                 }
                 "delegate_task" -> {
+                    if (shouldBlockPhoneToolAsDiscussion(commands = null)) {
+                        return ExecutedToolStep(buildDiscussOnlyPayload(), LiveScheduling.WHEN_IDLE)
+                    }
                     val goal = str("goal")
                     val title = str("title")
                     directPhone.cancelInFlightAct()
                     if (app.taskState.runs.value.isNotEmpty()) {
                         preemptRunningPhoneTasks()
                     }
-                    val simpleApp = if (settings.state.value.turboControl && app.taskState.runs.value.isEmpty()) {
+                    val simpleApp = if (app.taskState.runs.value.isEmpty()) {
                         PersonalLiveTools.extractSimpleLaunchApp(title, goal)
                     } else {
                         null
@@ -1511,11 +1494,7 @@ class PersonalLiveRuntime internal constructor(
                                     put("frame_attached", false)
                                     put(
                                         "note",
-                                        if (settings.state.value.turboControl) {
-                                            "当前没有正在打开的实时虚拟屏（之前的后台任务已收尾并释放了临时屏幕）。若机主想看到或继续操作该应用，请立即调用 quick_phone_act 传入 launch 打开它。"
-                                        } else {
-                                            "当前没有运行中的后台任务虚拟屏。若机主想继续操作该应用，请调用 delegate_task。"
-                                        },
+                                        "当前没有正在打开的实时虚拟屏（之前的后台任务已收尾并释放了临时屏幕）。若机主想看到或继续操作该应用，请立即调用 quick_phone_act 传入 launch 打开它。",
                                     )
                                     finishedTask?.result?.let { put("last_result", it.take(500)) }
                                 },
@@ -1665,11 +1644,97 @@ class PersonalLiveRuntime internal constructor(
         }
         if (text.isNotEmpty()) {
             directPhone.onNewUserTurn()
+            recordTurnUserUtterance(text)
             markUserTurnPendingRecovery(text)
             recordRecentUserQuote(text)
             agent.recordLiveMessage("user", text)
             _uiState.update { it.copy(liveUserTranscript = "") }
         }
+    }
+
+    private fun recordTurnUserUtterance(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        synchronized(this) {
+            val prev = currentTurnUserUtterance
+            currentTurnUserUtterance = if (prev.isNullOrBlank()) clean else "$prev $clean"
+            currentTurnIntentAssessed = false
+        }
+    }
+
+    private fun clearCurrentTurnIntentState() {
+        synchronized(this) {
+            currentTurnUserUtterance = null
+            currentTurnIntentAssessed = false
+        }
+    }
+
+    private fun currentTurnUtteranceSnapshot(): String? = synchronized(this) {
+        val committed = currentTurnUserUtterance?.trim().orEmpty()
+        val pending = userTurnBuffer.toString().trim()
+        when {
+            committed.isEmpty() -> pending.ifEmpty { null }
+            pending.isEmpty() -> committed
+            else -> "$committed $pending"
+        }
+    }
+
+    private fun recentConversationContextForIntent(currentMessage: String): String {
+        val nonTask = agent.state.value.messages.filter { it.role != "task" }
+        val priorList = if (
+            nonTask.lastOrNull()?.role == "user" &&
+            nonTask.last().conversationText().trim() == currentMessage.trim()
+        ) {
+            nonTask.dropLast(1)
+        } else {
+            nonTask
+        }
+        val history = priorList.asReversed()
+            .asSequence()
+            .mapNotNull { m -> m.conversationText().takeIf(String::isNotBlank)?.let { "${m.role}: ${it.take(240)}" } }
+            .take(4)
+            .toList()
+            .asReversed()
+            .joinToString("\n")
+        val openApp = directPhoneApp.value?.takeIf { it.isNotBlank() }
+        return if (openApp != null) {
+            buildString {
+                if (history.isNotBlank()) appendLine(history)
+                append("[Active virtual screen app: ").append(openApp).append(']')
+            }
+        } else {
+            history
+        }
+    }
+
+    private suspend fun shouldBlockPhoneToolAsDiscussion(commands: JsonArray?): Boolean {
+        if (commands != null && LiveDirectDecision.isPassiveObservationOnly(commands)) return false
+        val decision = app.tasks.decisionModel(app) ?: return false
+        val utterance = synchronized(this) {
+            if (currentTurnIntentAssessed) return@synchronized null
+            val committed = currentTurnUserUtterance?.trim().orEmpty()
+            val pending = userTurnBuffer.toString().trim()
+            val merged = when {
+                committed.isEmpty() -> pending
+                pending.isEmpty() -> committed
+                else -> "$committed $pending"
+            }.trim()
+            if (merged.length < 4) return@synchronized null
+            currentTurnIntentAssessed = true
+            merged
+        } ?: return false
+        return LiveDirectDecision.shouldBlockAsDiscussion(
+            decision = decision,
+            currentTurnUserText = utterance,
+            recentContext = recentConversationContextForIntent(utterance),
+            commands = commands,
+        )
+    }
+
+    private fun buildDiscussOnlyPayload(): JsonObject = buildJsonObject {
+        put("ok", false)
+        put("status", "discuss_only")
+        put("message", "机主当前只是口头探讨或提问，并未要求立即操作手机；请直接用自然口语回答机主，不要打开或点击应用。")
     }
 
     private fun commitAssistantTurnIfAny(): Boolean {
@@ -1724,6 +1789,8 @@ class PersonalLiveRuntime internal constructor(
 
     private fun clearPendingTurnRecovery() {
         synchronized(this) {
+            currentTurnUserUtterance = null
+            currentTurnIntentAssessed = false
             unansweredUserTurnText = null
             unansweredTurnAtMs = 0L
             unansweredToolSummaries.clear()

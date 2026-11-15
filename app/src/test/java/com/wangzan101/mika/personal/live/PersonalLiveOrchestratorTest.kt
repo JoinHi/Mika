@@ -109,8 +109,8 @@ class PersonalLiveOrchestratorTest {
 
     @Test
     fun noVerbalApprovalSurfaceExistsInLiveToolsOrSchemas() {
-        for (turbo in listOf(true, false)) {
-            val names = PersonalLiveTools.toolsForMode(turbo, searchEnabled = true).map { it.spec.name }
+        for (search in listOf(true, false)) {
+            val names = PersonalLiveTools.toolsForMode(searchEnabled = search).map { it.spec.name }
             assertFalse("confirm_task must never be exposed to the model", "confirm_task" in names)
         }
         assertFalse("confirm_task" in PersonalLiveTools.ALL.map { it.spec.name })
@@ -121,7 +121,7 @@ class PersonalLiveOrchestratorTest {
         assertTrue(quickSchema.contains("\"resourceId\""))
         assertTrue(quickSchema.contains("\"whenText\""))
 
-        val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", turboControl = true, nowMs = 1_700_000_000_000L)
+        val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L)
         assertTrue(prompt.contains("严禁索要口头确认"))
         assertFalse(prompt.contains("user_confirmed"))
         assertFalse(prompt.contains("confirm_task"))
@@ -252,13 +252,16 @@ class PersonalLiveOrchestratorTest {
     }
 
     @Test
-    fun turboModeToggleSwitchesPureTimingProfileAndLiveToolExposure() {
-        val turbo = PhoneWaitProfile.forTurbo(true)
-        val standard = PhoneWaitProfile.forTurbo(false)
+    fun unifiedDirectControlExposesQuickPhoneActAndTunedTurboWaitProfile() {
+        val turbo = PhoneWaitProfile.TURBO
+        val standard = PhoneWaitProfile.STANDARD
         assertTrue(turbo.turbo)
         assertTrue(turbo.instantTyping)
         assertTrue(turbo.instantGesture)
-        assertTrue(turbo.changeCapMs < standard.changeCapMs)
+        assertTrue(turbo.changeProbeMs >= 380L)
+        assertTrue(turbo.pasteWaitMs >= 500L)
+        assertTrue(turbo.settleCapMs >= 550L)
+        assertTrue((turbo.changeCapMs + turbo.changePollMs) * 2 < standard.changeCapMs)
         assertTrue(turbo.settleCapMs < standard.settleCapMs)
         assertTrue(turbo.batchSettleMs < standard.batchSettleMs)
         assertTrue(turbo.pasteWaitMs < standard.pasteWaitMs)
@@ -266,20 +269,18 @@ class PersonalLiveOrchestratorTest {
         assertFalse(standard.instantTyping)
         assertFalse(standard.instantGesture)
 
-        val turboTools = PersonalLiveTools.toolsForMode(turboControl = true, searchEnabled = true)
-        val standardTools = PersonalLiveTools.toolsForMode(turboControl = false, searchEnabled = true)
-        val noSearchTools = PersonalLiveTools.toolsForMode(turboControl = true, searchEnabled = false)
-        val quickTool = turboTools.firstOrNull { it.spec.name == PersonalLiveTools.QUICK_PHONE_ACT_NAME }
-        assertTrue("Turbo mode must expose quick_phone_act", quickTool != null)
+        val liveTools = PersonalLiveTools.toolsForMode(searchEnabled = true)
+        val noSearchTools = PersonalLiveTools.toolsForMode(searchEnabled = false)
+        val quickTool = liveTools.firstOrNull { it.spec.name == PersonalLiveTools.QUICK_PHONE_ACT_NAME }
+        assertTrue("Mika Live must always expose quick_phone_act", quickTool != null)
         assertEquals(LiveToolBehavior.BLOCKING, quickTool!!.behavior)
-        assertFalse("Standard baseline must omit quick_phone_act", standardTools.any { it.spec.name == PersonalLiveTools.QUICK_PHONE_ACT_NAME })
+        assertTrue("ALL must also include quick_phone_act", PersonalLiveTools.ALL.any { it.spec.name == PersonalLiveTools.QUICK_PHONE_ACT_NAME })
+        assertTrue("No-search mode still exposes quick_phone_act", noSearchTools.any { it.spec.name == PersonalLiveTools.QUICK_PHONE_ACT_NAME })
         assertFalse("Disabled web search must omit web_search tool", noSearchTools.any { it.spec.name == PersonalLiveTools.WEB_SEARCH_NAME })
 
-        val turboPrompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L, turboControl = true)
-        val stdPrompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L, turboControl = false)
-        assertTrue(turboPrompt.contains("quick_phone_act"))
-        assertFalse(stdPrompt.contains("quick_phone_act"))
-        assertTrue(stdPrompt.contains("标准对比模式"))
+        val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L)
+        assertTrue(prompt.contains("quick_phone_act"))
+        assertFalse(prompt.contains("标准对比模式"))
     }
 
     @Test
@@ -324,26 +325,44 @@ class PersonalLiveOrchestratorTest {
     }
 
     @Test
-    fun liveSettingsPersistsTurboControlExplicitlyAndPromptEnforcesToolTruthfulness() {
+    fun liveSettingsIgnoresLegacyTurboFieldAndDirectScreenSummaryAttachesVisualFallbackWhenNeeded() {
         val tmp = java.nio.file.Files.createTempFile("live-settings-test", ".json").toFile()
         try {
-            tmp.delete()
-            val settings = PersonalLiveSettings(tmp)
-            assertTrue(settings.state.value.turboControl)
-
-            settings.update { it.copy(model = "gemini-3.8-live", turboControl = false) }
-            val rawJson = tmp.readText()
-            assertTrue("encodeDefaults must persist turboControl explicitly", rawJson.contains("\"turboControl\":false"))
-
+            tmp.writeText("""{"providerId":"g1","model":"gemini-3.8-live","voiceName":"Kore","turboControl":false}""")
             val reloaded = PersonalLiveSettings(tmp)
-            assertFalse(reloaded.state.value.turboControl)
+            assertEquals("g1", reloaded.state.value.providerId)
             assertEquals("gemini-3.8-live", reloaded.state.value.model)
+            assertEquals("Kore", reloaded.state.value.voiceName)
 
-            val turboDelegate = PersonalLiveTools.toolsForMode(true).first { it.spec.name == "delegate_task" }
-            assertTrue(turboDelegate.spec.description.contains("严禁调用本工具，必须调用 quick_phone_act"))
+            reloaded.update { it.copy(voiceName = "Puck") }
+            val savedJson = tmp.readText()
+            assertFalse("Obsolete turboControl must no longer be written", savedJson.contains("turboControl"))
 
-            val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L, turboControl = true)
+            val delegate = PersonalLiveTools.toolsForMode().first { it.spec.name == "delegate_task" }
+            assertTrue(delegate.spec.description.contains("严禁调用本工具，必须调用 quick_phone_act"))
+
+            val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L)
             assertTrue(prompt.contains("铁律·严禁嘴上空许诺不调工具"))
+
+            val denseScreen = buildJsonObject {
+                put("elements", JsonArray((1..80).map { idx -> buildJsonObject { put("name", "item_$idx") } }))
+            }
+            val normalScreen = buildJsonObject {
+                put("elements", JsonArray((1..12).map { idx -> buildJsonObject { put("name", "item_$idx") } }))
+            }
+            val protectedScreen = buildJsonObject {
+                put("protected", true)
+                put("elements", JsonArray(emptyList()))
+            }
+            val compacted = LiveDirectPhoneController.compactScreen(denseScreen)
+            assertEquals(72, (compacted["elements"] as JsonArray).size)
+            assertEquals(JsonPrimitive(true), compacted["elementsTruncated"])
+
+            assertTrue(LiveDirectPhoneController.shouldAttachVisualFrame("target_not_found", normalScreen))
+            assertTrue(LiveDirectPhoneController.shouldAttachVisualFrame("ambiguous_target", normalScreen))
+            assertTrue(LiveDirectPhoneController.shouldAttachVisualFrame(null, denseScreen))
+            assertFalse(LiveDirectPhoneController.shouldAttachVisualFrame(null, normalScreen))
+            assertFalse(LiveDirectPhoneController.shouldAttachVisualFrame("target_not_found", protectedScreen))
         } finally {
             tmp.delete()
         }
@@ -872,7 +891,7 @@ class PersonalLiveOrchestratorTest {
 
     @Test
     fun systemPromptSeparatesPreemptivePhoneTrackFromBackgroundDeepThink() {
-        val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", turboControl = true, nowMs = 1_700_000_000_000L)
+        val prompt = PersonalLiveTools.buildSystemPrompt(PersonalState(), "", nowMs = 1_700_000_000_000L)
         assertTrue(prompt.contains("绝不要让机主等待上一条任务结束"))
         assertTrue(prompt.contains("deep_think"))
         assertTrue(prompt.contains("互不阻塞"))

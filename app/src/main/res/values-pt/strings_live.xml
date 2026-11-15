@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">Alterne primeiro para outro aplicativo e verifique a acessibilidade e a permissão de compartilhamento de tela.</string>
     <string name="live_hint_idle_hangup">O Mika Live foi encerrado automaticamente após 3 minutos de silêncio.</string>
 
-    <string name="live_hint_turbo_on">⚡ Modo turbo ativado (sem esperas + controle direto por voz)</string>
-    <string name="live_hint_turbo_off">Modo padrão ativado (pausas naturais + tarefas em segundo plano)</string>
     <string name="live_hint_direct_elapsed">⚡ Controle direto · %1$d etapas em %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Tarefa turbo em %1$ss</string>
-    <string name="live_hint_task_standard_elapsed">Modo padrão em %1$ss</string>
-    <string name="live_mode_turbo_badge">Turbo</string>
-    <string name="live_mode_standard_badge">Padrão</string>
-    <string name="live_mode_turbo_summary">Sem esperas · controle direto por voz</string>
-    <string name="live_mode_standard_summary">Pausas padrão · comparação base</string>
-    <string name="live_settings_turbo_title">Modo de controle turbo (comparar)</string>
-    <string name="live_settings_turbo_desc">Ignora pausas artificiais e esperas no modo de voz e ativa ações diretas com o Gemini Live. Desative para comparar com o modo padrão.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ Tarefa concluída em %1$ss</string>
 
     <string name="live_stage_idle_title">Tela virtual ao vivo pronta</string>
     <string name="live_stage_idle_body">Peça à Mika para abrir um aplicativo ou executar uma ação e veja a tela em tempo real em tamanho máximo.</string>

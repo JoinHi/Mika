@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">請先切到要查看的應用程式，並確認已開啟無障礙服務與畫面共享權限。</string>
     <string name="live_hint_idle_hangup">靜默滿 3 分鐘且無背景任務，Mika Live 已自動掛斷。</string>
 
-    <string name="live_hint_turbo_on">⚡ 已切換至極速模式（跳過等待延遲 + 語音直控）</string>
-    <string name="live_hint_turbo_off">已切換至標準對比模式（保留擬人節奏 + 背景任務）</string>
     <string name="live_hint_direct_elapsed">⚡ 極速直控 · %1$d 步 %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ 極速任務耗時 %1$ss</string>
-    <string name="live_hint_task_standard_elapsed">標準模式耗時 %1$ss</string>
-    <string name="live_mode_turbo_badge">極速直控</string>
-    <string name="live_mode_standard_badge">標準對比</string>
-    <string name="live_mode_turbo_summary">已跳過等待延遲 · 優先語音直控</string>
-    <string name="live_mode_standard_summary">標準擬人等待 · 走背景任務對比</string>
-    <string name="live_settings_turbo_title">極速操控模式（對比開關）</string>
-    <string name="live_settings_turbo_desc">開啟後啟用 Gemini Live 低延遲單步/短批語音直控並縮短直控等待視窗；關閉可切回標準背景任務對比體驗。</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ 背景任務耗時 %1$ss</string>
 
     <string name="live_stage_idle_title">即時虛擬螢幕待命中</string>
     <string name="live_stage_idle_body">直接對 Mika 說出要開啟的應用程式或操作，即時畫面將在此全幅放大呈現</string>

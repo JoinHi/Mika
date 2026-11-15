@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">ابتدا به برنامه دیگری بروید و دسترسی‌پذیری و مجوز اشتراک صفحه را بررسی کنید.</string>
     <string name="live_hint_idle_hangup">پس از ۳ دقیقه سکوت بدون کار فعال، Mika Live به‌طور خودکار پایان یافت.</string>
 
-    <string name="live_hint_turbo_on">⚡ حالت سریع فعال شد (حذف مکث‌ها + کنترل صوتی مستقیم)</string>
-    <string name="live_hint_turbo_off">حالت استاندارد مقایسه فعال شد (مکث عادی + کار پس‌زمینه)</string>
     <string name="live_hint_direct_elapsed">⚡ کنترل مستقیم · %1$d گام در %2$s ثانیه</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ کار سریع در %1$s ثانیه انجام شد</string>
-    <string name="live_hint_task_standard_elapsed">حالت استاندارد در %1$s ثانیه انجام شد</string>
-    <string name="live_mode_turbo_badge">سریع</string>
-    <string name="live_mode_standard_badge">استاندارد</string>
-    <string name="live_mode_turbo_summary">بدون مکث اضافه · کنترل مستقیم صوتی</string>
-    <string name="live_mode_standard_summary">مکث استاندارد · مقایسه با پس‌زمینه</string>
-    <string name="live_settings_turbo_title">حالت کنترل سریع (کلید مقایسه)</string>
-    <string name="live_settings_turbo_desc">با روشن بودن، مکث‌ها و انتظارهای اضافی در حالت صوتی حذف شده و کنترل مستقیم گوشی با Gemini Live فعال می‌شود. برای مقایسه با حالت استاندارد خاموش کنید.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ کار در %1$s ثانیه انجام شد</string>
 
     <string name="live_stage_idle_title">صفحه مجازی زنده آماده است</string>
     <string name="live_stage_idle_body">برنامه یا کار موردنظر را به Mika بگویید تا تصویر زنده در اینجا با بیشترین اندازه نمایش داده شود</string>

@@ -11,12 +11,15 @@
 - `LiveUserTextDeliverer` 统一处理通话期间的文字输入：连接或重连窗口内单次落盘并排队冲刷；发送失败或电话暂挂时直接抛错，不退回普通文字模型重复落盘。
 - `app/personal/live/LiveDuplexAudioEngine.kt` 与 `app/personal/live/PersonalLiveService.kt` 管理全双工采集播放、硬件回声消除与前台常驻，原生音频句柄由各自采集/播放读写协程在退出时释放。
 
-## 执行路径与极速对比开关
+## 统一执行架构与 Jev 辅助判别
 
-设置中的 `turboControl` 开关支持在真机上直接对比两种执行路径：
+Mika Live 采用统一的「极速直控优先 + 超长任务自动委派 + 可选 Jev 判别辅助」架构：
 
-- **标准对比模式（关闭）**：仅暴露个人助手标准委派能力（delegate_task、revise_task、cancel_task、answer_task 等），所有手机操作经 `PersonalActions` 与 `TaskService` 进入完整 `TaskRun`，使用默认 `PhoneWaitProfile`。
-- **极速操控模式（开启）**：在保留后台长任务委派的同时开放低延迟单步与短批手机操作（quick_phone_act、quick_phone_read），由 `app/personal/live/LiveDirectPhoneController.kt` 在独立虚拟屏上执行，并显式传入 `app/cap/phone/a11y/PhoneWaitProfile.kt` 的极速等待参数。等待配置只管理界面稳定与动画等待时长，不影响无关后台任务，也不耦合意图判断或工具开关。
+- **低延迟语音直控（`quick_phone_act`）**：1–12 步常见手机操作（启动应用、点击、输入、滚动、返回、界面观察）直接由 `app/personal/live/LiveDirectPhoneController.kt` 在常驻实时虚拟屏上执行，使用 `app/cap/phone/a11y/PhoneWaitProfile.kt` 的 `TURBO` 等待配置，跳过人为拟人停顿的同时保留足够的异步点击探测与剪贴板粘贴稳定窗口。等待配置仅作用于当前活跃语音直控虚拟屏，不影响普通聊天或定时后台 `TaskRun` 的 `STANDARD` 配置。
+- **复杂长任务委派（`delegate_task`）**：超过 12 步的跨应用流程、网页浏览、运营商电话与沙箱文件操作自动交给后台 `TaskRun` 执行；若模型误将纯单应用启动发往 `delegate_task`，运行时自动在空闲时收敛为直控启动。
+- **Jev（`DecisionModel`）消歧与闲聊防误触（`core/live/LiveDirectDecision.kt`）**：复用用户已在设置中启用的 Jev 决策模型（`TaskEnvironment.decisionModel`）与 `IntentGate` 的 `intent_decision` 规则：
+  1. 本轮首次非只读手机操作前校验用户原话意图，高置信度（`>= 0.85`）判定为纯口头探讨（`DISCUSS`）时直接返回 `discuss_only` 阻止误打开/误点击；
+  2. 直控按控件归属 `actionRef`/`editRef` 合并同卡片子节点消除假歧义；当遇到字面未命中（`target_not_found`）或同名多按钮歧义（`ambiguous_target`）时，交由 Jev 结合用户原话、阅读序、归一化坐标与父容器上下文选点（概率与适用性双 `>= 0.85` 门禁），未启用或置信度不足时无副作用回退并附带实时截图供主模型补救。
 
 ## 安全边界、资源调度与人工审批
 

@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">먼저 다른 앱으로 전환하고 접근성 및 화면 공유 권한을 확인하세요.</string>
     <string name="live_hint_idle_hangup">3분 동안 대화가 없고 진행 중인 작업이 없어 Mika Live가 자동 종료되었습니다.</string>
 
-    <string name="live_hint_turbo_on">⚡ 고속 모드로 전환됨 (대기 생략 + 음성 직접 제어)</string>
-    <string name="live_hint_turbo_off">표준 비교 모드로 전환됨 (기본 대기 + 백그라운드 작업)</string>
     <string name="live_hint_direct_elapsed">⚡ 고속 직접 제어 · %1$d단계 %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ 고속 작업 소요 %1$ss</string>
-    <string name="live_hint_task_standard_elapsed">표준 모드 소요 %1$ss</string>
-    <string name="live_mode_turbo_badge">고속 제어</string>
-    <string name="live_mode_standard_badge">표준 비교</string>
-    <string name="live_mode_turbo_summary">대기 지연 생략 · 음성 직접 제어</string>
-    <string name="live_mode_standard_summary">기본 대기 유지 · 백그라운드 비교</string>
-    <string name="live_settings_turbo_title">고속 제어 모드 (비교 스위치)</string>
-    <string name="live_settings_turbo_desc">켜면 음성 모드에서 인위적 지연과 대기 시간을 일괄 생략하고 Gemini Live 직접 제어를 활성화합니다. 끄면 표준 모드와 속도를 비교할 수 있습니다.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ 작업 완료 %1$ss</string>
 
     <string name="live_stage_idle_title">실시간 가상 화면 대기 중</string>
     <string name="live_stage_idle_body">Mika에게 실행할 앱이나 작업을 말하면 실시간 화면이 여기에 크게 표시됩니다</string>

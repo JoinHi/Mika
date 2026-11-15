@@ -81,7 +81,6 @@ import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.ButtonSize
 import com.wangzan101.mika.ui.components.GlassBar
 import com.wangzan101.mika.ui.components.MikaButton
-import com.wangzan101.mika.ui.components.MikaSwitch
 import com.wangzan101.mika.ui.components.SelectChip
 import com.wangzan101.mika.ui.components.cardSurface
 import com.wangzan101.mika.ui.components.floatShadow
@@ -194,7 +193,6 @@ internal fun PersonalLiveBar(
     onOpenSettings: () -> Unit,
     onDismissHint: () -> Unit,
     onHangup: () -> Unit,
-    onToggleTurbo: () -> Unit = {},
     showSubtitlesInline: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
@@ -229,27 +227,8 @@ internal fun PersonalLiveBar(
             .testTag("personal-live-bar"),
     ) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(if (showSubtitlesInline) 8.dp else 6.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (hintText != null) {
-                    LiveHintChip(hintText, onDismiss = onDismissHint, modifier = Modifier.weight(1f))
-                } else {
-                    Text(
-                        stringResource(if (state.turboControl) R.string.live_mode_turbo_summary else R.string.live_mode_standard_summary),
-                        Modifier.weight(1f).padding(start = 6.dp),
-                        style = MikaType.Caption,
-                        color = c.ink3,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                LiveTurboSwitchPill(
-                    turbo = state.turboControl,
-                    onClick = onToggleTurbo,
-                )
+            if (hintText != null) {
+                LiveHintChip(hintText, onDismiss = onDismissHint, modifier = Modifier.fillMaxWidth())
             }
 
             AnimatedVisibility(
@@ -361,7 +340,6 @@ internal fun PersonalLiveCompactBanner(
     onBackToVoiceBar: () -> Unit,
     onToggleMute: () -> Unit,
     onHangup: () -> Unit,
-    onToggleTurbo: () -> Unit = {},
 ) {
     val c = MikaTheme.colors
     val preview = state.liveAssistantTranscript.ifBlank { state.liveUserTranscript }
@@ -385,11 +363,6 @@ internal fun PersonalLiveCompactBanner(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        LiveTurboSwitchPill(
-            turbo = state.turboControl,
-            onClick = onToggleTurbo,
-            compact = true,
-        )
         Text(
             stringResource(R.string.live_action_back_to_voice),
             style = MikaType.Caption.copy(fontWeight = FontWeight.SemiBold),
@@ -410,45 +383,6 @@ internal fun PersonalLiveCompactBanner(
         ) {
             Icon(MikaIcons.Close, null, Modifier.size(14.dp), tint = c.bad)
         }
-    }
-}
-
-@Composable
-internal fun LiveTurboSwitchPill(
-    turbo: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    val c = MikaTheme.colors
-    val label = stringResource(if (turbo) R.string.live_mode_turbo_badge else R.string.live_mode_standard_badge)
-    val bg = if (turbo) c.accentSoft else c.greySoft
-    val fg = if (turbo) c.accent else c.ink2
-    val border = if (turbo) c.accent.copy(alpha = 0.32f) else c.edge
-    Row(
-        modifier
-            .height(if (compact) 26.dp else 30.dp)
-            .background(bg, CircleShape)
-            .border(0.5.dp, border, CircleShape)
-            .clip(CircleShape)
-            .testTag("live-btn-turbo")
-            .clickable(role = Role.Switch, onClickLabel = label, onClick = onClick)
-            .padding(horizontal = if (compact) 8.dp else 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(
-            if (turbo) MikaIcons.Zap else MikaIcons.Clock,
-            null,
-            Modifier.size(if (compact) 13.dp else 14.dp),
-            tint = fg,
-        )
-        Text(
-            label,
-            style = MikaType.Caption.copy(fontWeight = FontWeight.SemiBold),
-            color = fg,
-            maxLines = 1,
-        )
     }
 }
 
@@ -653,47 +587,6 @@ internal fun PersonalLiveSettingsSheet(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.live_settings_title), style = MikaType.Title.copy(fontSize = 19.sp), color = c.ink)
                 Text(stringResource(R.string.live_settings_subtitle), style = MikaType.Caption, color = c.ink2)
-            }
-
-            Row(
-                Modifier.fillMaxWidth()
-                    .background(c.fill, MikaShapes.Card)
-                    .border(0.5.dp, c.edge, MikaShapes.Card)
-                    .clip(MikaShapes.Card)
-                    .clickable(role = Role.Switch) { live.setTurboControl(!cfg.turboControl) }
-                    .padding(horizontal = MikaSpace.S16, vertical = MikaSpace.S12)
-                    .testTag("live-settings-turbo-row"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(MikaSpace.S12),
-            ) {
-                Box(
-                    Modifier.size(34.dp)
-                        .background(if (cfg.turboControl) c.accentSoft else c.greySoft, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (cfg.turboControl) MikaIcons.Zap else MikaIcons.Clock,
-                        null,
-                        Modifier.size(18.dp),
-                        tint = if (cfg.turboControl) c.accent else c.ink2,
-                    )
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        stringResource(R.string.live_settings_turbo_title),
-                        style = MikaType.Label.copy(fontWeight = FontWeight.SemiBold),
-                        color = c.ink,
-                    )
-                    Text(
-                        stringResource(R.string.live_settings_turbo_desc),
-                        style = MikaType.Caption,
-                        color = c.ink2,
-                    )
-                }
-                MikaSwitch(
-                    checked = cfg.turboControl,
-                    onCheckedChange = null,
-                )
             }
 
             if (geminiProviders.isEmpty()) {

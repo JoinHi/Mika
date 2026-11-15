@@ -38,8 +38,10 @@ import com.wangzan101.mika.core.gate.ConfirmationGate
 import com.wangzan101.mika.core.gate.ConfirmationRequest
 import com.wangzan101.mika.core.gate.Irreversible
 import com.wangzan101.mika.core.guard.OperationGuards
+import com.wangzan101.mika.core.decision.DecisionModel
 import com.wangzan101.mika.core.knowledge.KnowledgeStore
 import com.wangzan101.mika.core.live.LiveDirectConfirmation
+import com.wangzan101.mika.core.live.LiveDirectDecision
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.personal.PersonalAgent
 import com.wangzan101.mika.core.record.RunSink
@@ -106,10 +108,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
 /**
- * Mika Live 低延迟直控控制器（受 `PersonalLiveConfig.turboControl` 开关控制）：
+ * Mika Live 统一低延迟直控控制器：
  *
  * 在 Gemini Live 热会话内复用虚拟屏 [AgentDisplay] + [AndroidScreen] + [AppAccessScreenPort] + [SmsPrivateScreen] + [ActionExecutor]，
- * 以逐步可取消的方式执行 1–12 步轻量级手机动作，并与 [TaskRun] 共享同一套资源与治理不变量：
+ * 以逐步可取消的方式执行 1–12 步轻量级手机动作，并在候选控件不唯一或字面未命中时可选复用 Jev [DecisionModel] 做语义/位置选点，与 [TaskRun] 共享同一套资源与治理不变量：
  * - 统一登记至 [com.wangzan101.mika.task.ResourceScheduler]，开启 `checkOtherTasks = true` 避免与后台任务争用同一 App；
  * - 每个写动作前经过逐动作关卡（锁屏/熄屏、助手连接、用户实时触控让行、前台被挪回主屏、示范模式与后台任务抢占）；
  * - 模型批次动作统一以 [Origin.Batch] 执行（永不消费审批凭据），高风险动作仅能由机主亲手点按 UI 确认卡片以 [Origin.Model] 单次放行，支付动作一律要求机主亲手触控完成。
@@ -120,6 +122,8 @@ class LiveDirectPhoneController internal constructor(
     private val onStageTouchMotion: ((maskedAction: Int, captureAfterSettle: suspend () -> LiveUserTouchCoordinator.CapturedGuidanceState?) -> Unit)? = null,
     private val onStageDiscreteTouch: ((captureAfterSettle: suspend () -> LiveUserTouchCoordinator.CapturedGuidanceState?) -> Unit)? = null,
     private val waitProfileProvider: () -> PhoneWaitProfile,
+    private val decisionModelProvider: () -> DecisionModel? = { null },
+    private val userUtteranceProvider: () -> String? = { null },
 ) {
     data class DirectActResult(
         val payload: JsonObject,
@@ -829,7 +833,7 @@ class LiveDirectPhoneController internal constructor(
         }
         "tap", "type", "clear" -> {
             val editable = op != "tap"
-            val target = selectTargetOnScreen(executor, callTag, index, command, editable)
+            val target = selectTargetOnScreen(executor, callTag, index, op, command, editable)
             if (target.error != null) {
                 ResolvedToolStep(error = target.error)
             } else if (op == "tap") {
@@ -903,6 +907,7 @@ class LiveDirectPhoneController internal constructor(
         executor: ActionExecutor,
         callTag: String,
         index: Int,
+        op: String,
         command: JsonObject,
         editable: Boolean,
     ): SelectedTarget {
@@ -928,24 +933,68 @@ class LiveDirectPhoneController internal constructor(
         if (qOut is ActionOutcome.Refused) return SelectedTarget(error = qOut.code)
         val qContent = (qOut as? ActionOutcome.Ran)?.exec?.content ?: return SelectedTarget(error = "query_failed")
         if (qContent["ok"] != JsonPrimitive(true)) return SelectedTarget(error = "query_failed")
-        if (qContent["truncated"] == JsonPrimitive(true)) return SelectedTarget(error = "ambiguous_target")
+        val truncated = qContent["truncated"] == JsonPrimitive(true)
         val sid = (qContent["snapshotId"] as? JsonPrimitive)?.contentOrNull ?: return SelectedTarget(error = "no_snapshot")
-        val refKey = if (editable) "editRef" else "actionRef"
-        val all = (qContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
-            .filter { (it[refKey] ?: it["ref"]) is JsonPrimitive && it["enabled"] != JsonPrimitive(false) }
-        val exact = text?.let { t ->
-            all.filter { (it["name"] as? JsonPrimitive)?.contentOrNull?.equals(t, ignoreCase = true) == true }
-        }.orEmpty()
-        val candidates = (exact.takeIf { it.isNotEmpty() } ?: all).let { items ->
-            val preferred = items.filter { it[if (editable) "editable" else "clickable"] == JsonPrimitive(true) }
-            preferred.takeIf { it.isNotEmpty() } ?: items
+        val rawMatches = (qContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val narrowed = if (!truncated) {
+            LiveDirectDecision.selectNarrowedCandidates(rawMatches, text, editable)
+        } else {
+            emptyList()
         }
-        if (candidates.size != 1) {
-            return SelectedTarget(error = if (candidates.isEmpty()) "target_not_found" else "ambiguous_target")
+        if (narrowed.size == 1) {
+            return SelectedTarget(ref = narrowed.single().ref, snapshotId = sid)
         }
-        val chosen = candidates.single()
-        val chosenRef = ((chosen[refKey] ?: chosen["ref"]) as JsonPrimitive).content
-        return SelectedTarget(ref = chosenRef, snapshotId = sid)
+
+        val fallbackError = if (narrowed.isEmpty() && !truncated) "target_not_found" else "ambiguous_target"
+        val decision = decisionModelProvider() ?: return SelectedTarget(error = fallbackError)
+        val currentApp = (qContent["currentApp"] as? JsonPrimitive)?.contentOrNull ?: _foregroundApp.value
+
+        if (narrowed.size >= 2 && !truncated) {
+            val chosenRef = LiveDirectDecision.chooseTargetWithJev(
+                decision = decision,
+                op = op,
+                command = command,
+                candidates = narrowed,
+                currentApp = currentApp,
+                userUtterance = userUtteranceProvider(),
+            )
+            if (chosenRef != null) {
+                return SelectedTarget(ref = chosenRef, snapshotId = sid)
+            }
+            return SelectedTarget(error = fallbackError)
+        }
+
+        val fullOut = executor.run(
+            Part.ToolCall(
+                "live_${callTag}_${index + 1}_full_query",
+                "phone_query",
+                buildJsonObject { put("limit", 100) }.toString(),
+            ),
+            Origin.Script(stepSeq.incrementAndGet()),
+        )
+        if (fullOut is ActionOutcome.Refused) return SelectedTarget(error = fullOut.code)
+        val fullContent = (fullOut as? ActionOutcome.Ran)?.exec?.content
+        if (fullContent?.get("ok") == JsonPrimitive(true)) {
+            val fullSid = (fullContent["snapshotId"] as? JsonPrimitive)?.contentOrNull ?: sid
+            val fullMatches = (fullContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            val screenCandidates = LiveDirectDecision.extractScreenCandidates(
+                matches = fullMatches,
+                editable = editable,
+                allowTapToFocusFallback = op == "type",
+            )
+            val chosenRef = LiveDirectDecision.chooseTargetWithJev(
+                decision = decision,
+                op = op,
+                command = command,
+                candidates = screenCandidates,
+                currentApp = (fullContent["currentApp"] as? JsonPrimitive)?.contentOrNull ?: currentApp,
+                userUtterance = userUtteranceProvider(),
+            )
+            if (chosenRef != null) {
+                return SelectedTarget(ref = chosenRef, snapshotId = fullSid)
+            }
+        }
+        return SelectedTarget(error = fallbackError)
     }
 
     private suspend fun hasTextOnScreen(
@@ -1640,8 +1689,8 @@ class LiveDirectPhoneController internal constructor(
                 )
             }
         }
-        private const val MAX_ELEMENTS_IN_SUMMARY = 40
-        private const val MAX_VISIBLE_TEXT_IN_SUMMARY = 25
+        internal const val MAX_ELEMENTS_IN_SUMMARY = 72
+        internal const val MAX_VISIBLE_TEXT_IN_SUMMARY = 40
         private const val MAX_PREVIEW_LONG_EDGE = 720
         private const val PREVIEW_JPEG_QUALITY = 68
 
@@ -1764,12 +1813,18 @@ class LiveDirectPhoneController internal constructor(
             }
         }
 
-        private fun shouldAttachVisualFrame(stopReason: String?, rawScreen: JsonObject?): Boolean {
+        internal fun shouldAttachVisualFrame(stopReason: String?, rawScreen: JsonObject?): Boolean {
             if (rawScreen?.get("protected") == JsonPrimitive(true)) return false
-            if (stopReason == "screen_needs_review") return true
+            if (
+                stopReason == "screen_needs_review" ||
+                stopReason == "target_not_found" ||
+                stopReason == "ambiguous_target"
+            ) {
+                return true
+            }
             if (rawScreen?.get("imageReason") != null) return true
-            val elements = rawScreen?.get("elements") as? JsonArray
-            return elements != null && elements.size <= 2
+            val elements = rawScreen?.get("elements") as? JsonArray ?: return false
+            return elements.size <= 2 || elements.size > MAX_ELEMENTS_IN_SUMMARY
         }
 
         private fun compressBitmapJpeg(bitmap: Bitmap): ByteArray {

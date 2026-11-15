@@ -62,24 +62,21 @@ data class PhoneWaitProfile(
             instantGesture = true,
             changePollMs = 50L,
             changeQuietMs = 110L,
-            changeProbeMs = 220L,
-            changeCapMs = 900L,
+            changeProbeMs = 400L,
+            changeCapMs = 950L,
             screenQuietMs = 110L,
             screenCheckCapMs = 450L,
             secondLookQuietMs = 70L,
             secondLookCapMs = 250L,
-            settleCapMs = 450L,
+            settleCapMs = 600L,
             focusWaitMs = 600L,
             readbackQuietMs = 60L,
             readbackCapMs = 260L,
-            pasteWaitMs = 320L,
+            pasteWaitMs = 500L,
             popupSettleMs = 100L,
             stillPollMs = 50L,
             stillCapMs = 350L,
             batchSettleMs = 180L,
         )
-
-        fun forTurbo(turboEnabled: Boolean): PhoneWaitProfile =
-            if (turboEnabled) TURBO else STANDARD
     }
 }

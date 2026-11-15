@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">انتقل إلى تطبيق آخر أولاً وتأكد من تفعيل خدمة تسهيل الاستخدام ومشاركة الشاشة.</string>
     <string name="live_hint_idle_hangup">انتهت جلسة Mika Live تلقائياً بعد 3 دقائق من الصمت.</string>
 
-    <string name="live_hint_turbo_on">⚡ تم تفعيل الوضع السريع (تخطي الانتظار + تحكم صوتي مباشر)</string>
-    <string name="live_hint_turbo_off">تم تفعيل الوضع القياسي للمقارنة (إيقاع طبيعي + مهام خلفية)</string>
     <string name="live_hint_direct_elapsed">⚡ تحكم مباشر · %1$d خطوات خلال %2$s ث</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ اكتملت المهمة السريعة خلال %1$s ث</string>
-    <string name="live_hint_task_standard_elapsed">اكتمل الوضع القياسي خلال %1$s ث</string>
-    <string name="live_mode_turbo_badge">سريع</string>
-    <string name="live_mode_standard_badge">قياسي</string>
-    <string name="live_mode_turbo_summary">تخطي الانتظار · تحكم صوتي مباشر</string>
-    <string name="live_mode_standard_summary">إيقاع قياسي · مهام خلفية للمقارنة</string>
-    <string name="live_settings_turbo_title">وضع التحكم السريع (مفتاح المقارنة)</string>
-    <string name="live_settings_turbo_desc">يتخطى فترات الانتظار والتأخير ويفعّل التحكم المباشر بالهاتف عبر Gemini Live. أوقفه للمقارنة مع الوضع القياسي.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ اكتملت المهمة خلال %1$s ث</string>
 
     <string name="live_stage_idle_title">الشاشة الافتراضية المباشرة جاهزة</string>
     <string name="live_stage_idle_body">اطلب من Mika فتح أي تطبيق أو تنفيذ إجراء وستظهر الشاشة المباشرة هنا بحجم كامل</string>

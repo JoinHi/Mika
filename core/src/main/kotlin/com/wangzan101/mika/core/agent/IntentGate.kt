@@ -26,20 +26,7 @@ internal class IntentGate(
         val prior = Conversation.context(priorTurns, maxTurns = 3, maxTokens = 800)
             ?.parts?.filterIsInstance<Part.Text>()?.joinToString("\n") { it.text }.orEmpty()
         if (decision != null) {
-            val picked = try {
-                withTimeoutOrNull(DECISION_TIMEOUT_MS) {
-                    decision.choose(buildJsonObject {
-                        put("currentMessage", task)
-                        put("recentContext", prior)
-                    }, Prompts.role("intent_decision"), OPTIONS, applicability = null)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            val intent = picked?.takeIf { it.probability.isFinite() && it.probability in DecisionPolicy.MIN_PROBABILITY..1.0 }
-                ?.choice?.takeIf { it in OPTIONS }?.let(::parse)
+            val intent = assessWithDecision(decision, task, prior, DECISION_TIMEOUT_MS)
             onDecision(intent?.let { "selected:${it.name}" } ?: "fallback")
             if (intent != null) return intent
         }
@@ -69,6 +56,29 @@ internal class IntentGate(
             "READ" to "Fetch current information from an app, website, file, or other live source. Navigation to read is allowed.",
             "ACT" to "Create, change, send, purchase, schedule, or otherwise perform an action now.",
         )
+
+        internal suspend fun assessWithDecision(
+            decision: DecisionModel,
+            task: String,
+            prior: String = "",
+            timeoutMs: Long = DECISION_TIMEOUT_MS,
+        ): Intent? {
+            val picked = try {
+                withTimeoutOrNull(timeoutMs) {
+                    decision.choose(buildJsonObject {
+                        put("currentMessage", task)
+                        put("recentContext", prior)
+                    }, Prompts.role("intent_decision"), OPTIONS, applicability = null)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            return picked?.takeIf { it.probability.isFinite() && it.probability in DecisionPolicy.MIN_PROBABILITY..1.0 }
+                ?.choice?.takeIf { it in OPTIONS }?.let(::parse)
+        }
+
         fun parse(raw: String): Intent? = when (raw.trim().removePrefix("`").removeSuffix("`").trim().uppercase()) {
             "DISCUSS" -> Intent.Discuss
             "READ" -> Intent.Read

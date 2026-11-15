@@ -208,13 +208,12 @@ class LiveTurnCoordinatorTest {
 
     @Test
     fun liveToolsExposeWebSearchAndDeepThinkWhileKeepingApprovalHumanOnly() {
-        for (turbo in listOf(true, false)) {
-            val names = PersonalLiveTools.toolsForMode(turbo, searchEnabled = true).map { it.spec.name }.toSet()
-            assertTrue(PersonalLiveTools.WEB_SEARCH_NAME in names)
-            assertTrue(PersonalLiveTools.DEEP_THINK_NAME in names)
-            assertTrue(PersonalLiveTools.STEER_OR_CANCEL_THINK_NAME in names)
-            assertFalse("confirm_task" in names)
-        }
+        val names = PersonalLiveTools.toolsForMode(searchEnabled = true).map { it.spec.name }.toSet()
+        assertTrue(PersonalLiveTools.QUICK_PHONE_ACT_NAME in names)
+        assertTrue(PersonalLiveTools.WEB_SEARCH_NAME in names)
+        assertTrue(PersonalLiveTools.DEEP_THINK_NAME in names)
+        assertTrue(PersonalLiveTools.STEER_OR_CANCEL_THINK_NAME in names)
+        assertFalse("confirm_task" in names)
         val quickSchema = PersonalLiveTools.QUICK_PHONE_ACT.spec.parametersJsonSchema
         assertFalse(quickSchema.contains("\"user_confirmed\""))
 

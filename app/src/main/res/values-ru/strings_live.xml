@@ -44,17 +44,8 @@
     <string name="live_screen_unavailable">Сначала переключитесь в другое приложение и проверьте специальные возможности и доступ к экрану.</string>
     <string name="live_hint_idle_hangup">Сеанс Mika Live автоматически завершён после 3 минут тишины.</string>
 
-    <string name="live_hint_turbo_on">⚡ Турборежим включён (без пауз + прямое управление голосом)</string>
-    <string name="live_hint_turbo_off">Обычный режим сравнения (стандартные паузы + фоновые задачи)</string>
     <string name="live_hint_direct_elapsed">⚡ Прямое управление · шагов: %1$d за %2$s с</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Турбозадача выполнена за %1$s с</string>
-    <string name="live_hint_task_standard_elapsed">Обычный режим: %1$s с</string>
-    <string name="live_mode_turbo_badge">Турбо</string>
-    <string name="live_mode_standard_badge">Обычный</string>
-    <string name="live_mode_turbo_summary">Без задержек · прямое управление</string>
-    <string name="live_mode_standard_summary">Обычные паузы · фоновый режим</string>
-    <string name="live_settings_turbo_title">Турбоуправление (переключатель сравнения)</string>
-    <string name="live_settings_turbo_desc">Пропускает искусственные паузы и ожидания в голосовом режиме и включает прямое управление через Gemini Live. Выключите для сравнения со стандартным режимом.</string>
+    <string name="live_hint_task_turbo_elapsed">⚡ Задача выполнена за %1$s с</string>
 
     <string name="live_stage_idle_title">Виртуальный экран готов</string>
     <string name="live_stage_idle_body">Скажите Mika открыть приложение или выполнить действие — экран появится здесь в реальном времени во весь размер.</string>

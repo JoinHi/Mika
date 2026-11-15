@@ -22,8 +22,6 @@ data class PersonalLiveConfig(
     val providerId: String = "",
     val model: String = GeminiLiveProtocol.DEFAULT_MODEL,
     val voiceName: String = GeminiLiveProtocol.DEFAULT_VOICE,
-    /** 语音极速操控开关：开启时统一跳过拟人等待延迟并启用 Gemini Live 语音直控快手；关闭时回退标准模式用于切换对比。 */
-    val turboControl: Boolean = true,
 )
 
 data class ResolvedLiveCredentials(

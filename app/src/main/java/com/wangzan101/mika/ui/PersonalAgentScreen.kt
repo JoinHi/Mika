@@ -351,7 +351,6 @@ fun PersonalAgentScreen(
                 onOpenSettings = { showLiveSettings = true },
                 onDismissHint = runtime.live::clearError,
                 onHangup = { runtime.live.stop() },
-                onToggleTurbo = runtime.live::toggleTurboControl,
                 showSubtitlesInline = !showingLiveStage,
                 modifier = Modifier.onSizeChanged { composerHeight = it.height },
             )
@@ -366,7 +365,6 @@ fun PersonalAgentScreen(
                         },
                         onToggleMute = runtime.live::toggleMute,
                         onHangup = { runtime.live.stop() },
-                        onToggleTurbo = runtime.live::toggleTurboControl,
                     )
                 } else if (!liveState.statusHint.isNullOrBlank()) {
                     LiveHintChip(

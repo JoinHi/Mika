@@ -12,11 +12,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 语音专属虚拟大屏（[com.wangzan101.mika.ui.PersonalLiveScreenStage]）机主手动触控引导协调器：
+ * 语音专属虚拟大屏（[com.wangzan101.mika.ui.PersonalLiveScreenStage]）机主手动触控协同器：
  * - 机主点按/滑动虚拟大屏上的 App 时**绝不中断语音通话**；
  * - 手指按压期间标记 [isUserTouching] 为 true，延后空闲释放与话轮抢答；
- * - 手指抬起后经 [SETTLE_DEBOUNCE_MS] 连续手势合并防抖（多次滑动/点按合并为一次引导事件），
- *   等待新界面稳定后自动采集无障碍控件摘要与最新 JPEG 画面，投递给 [LiveTurnCoordinator] 语音播报操作结果。
+ * - 手指抬起后经 [SETTLE_DEBOUNCE_MS] 连续手势合并防抖（多次滑动/点按合并为一次状态同步），
+ *   等待新界面稳定后采集轻量无障碍控件摘要，默认以**静默上下文同步（`speakAloud = false`）**投递给 [LiveTurnCoordinator]，
+ *   既让语音模型实时掌握最新界面上下文，又不主动插话打断机主、也不堆积冗余截图 token。
  */
 internal class LiveUserTouchCoordinator(
     private val scope: CoroutineScope,
@@ -35,6 +36,7 @@ internal class LiveUserTouchCoordinator(
     private val lock = Any()
     private var settleJob: Job? = null
     private var pendingResumeHook: (() -> Unit)? = null
+    private var lastSyncedSignature: String? = null
 
     val isUserTouching: Boolean
         get() = touching.get()
@@ -107,14 +109,26 @@ internal class LiveUserTouchCoordinator(
                 val captured = runCatching { captureAfterSettle() }.getOrNull()
                 resume?.invoke()
                 if (captured != null && (captured.screenSummary.isNotBlank() || captured.jpegFrame != null)) {
-                    turnCoordinator.enqueue(
-                        LiveAsyncEvent.UserTouchGuidance(
-                            appLabel = captured.appLabel,
-                            screenSummary = captured.screenSummary,
-                            jpegFrame = captured.jpegFrame,
-                            touchCount = count,
-                        ),
-                    )
+                    val sig = "${captured.appLabel.orEmpty()}|${captured.screenSummary}"
+                    val shouldEmit = synchronized(lock) {
+                        if (captured.screenSummary.isNotBlank() && sig == lastSyncedSignature) {
+                            false
+                        } else {
+                            lastSyncedSignature = sig
+                            true
+                        }
+                    }
+                    if (shouldEmit) {
+                        turnCoordinator.enqueue(
+                            LiveAsyncEvent.UserTouchGuidance(
+                                appLabel = captured.appLabel,
+                                screenSummary = captured.screenSummary,
+                                jpegFrame = captured.jpegFrame,
+                                touchCount = count,
+                                speakAloud = false,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -126,6 +140,7 @@ internal class LiveUserTouchCoordinator(
         val resume = synchronized(lock) {
             settleJob?.cancel()
             settleJob = null
+            lastSyncedSignature = null
             val hook = pendingResumeHook
             pendingResumeHook = null
             hook

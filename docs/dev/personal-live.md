@@ -1,39 +1,48 @@
 # 个人助手实时语音（Mika Live）
 
-在[个人助手模式](personal-agent.md)之上提供全双工实时语音与实时虚拟屏舞台，由 Gemini Live WebSocket 原生音频驱动，沿用个人主会话的聊天记录、记忆、用量记账与安全审批边界。
+在[个人助手模式](personal-agent.md)之上提供全双工实时语音与实时虚拟屏舞台，沿用个人主会话的聊天记录、记忆、用量记账与安全审批边界。
 
-## 分层与会话生命周期
+## 多模型会话契约与会话生命周期
 
-- `core/live/GeminiLiveProtocol.kt` 与 `core/live/GeminiLiveClient.kt` 负责 BidiGenerateContent 协议编解码、模型列表分页拉取与 WebSocket 收发。客户端复用宿主连接池，入站控制事件与音频分片分离计数（拥塞时仅丢弃排队音频，绝不丢弃控制、转写、工具调用或用量帧），并对出站媒体载荷设上限。
-- `core/live/LiveTurnCoordinator.kt` 纯函数协调插话窗口、后台任务完成/审批通知注入与静默挂断策略（`LiveSessionPolicy`）。
-- `app/personal/live/PersonalLiveRuntime.kt` 为每次通话创建独立的会话协程作用域，集中管理连接重连、电话占线暂挂、唤醒词让位与恢复、`UsageLedger` 用量落盘及每日预算门禁。
+- `core/live/LiveSessionContract.kt` 定义与底层服务商解耦的实时语音会话契约（`LiveRealtimeSession`、`LiveSessionConfig`、`LiveSessionEvent`、`LiveProviderCapabilities`），按模型工具调用能力自动分档：
+  - **`RICH_TOOLS`**（如 Gemini Live、OpenAI Realtime）：挂载完整直连基础工具池与 Jev 扩展路由入口；
+  - **`LITE_INTENT`**（如千问 Qwen-Omni 等弱结构化工具模型）：仅挂载扁平单字符串参数的精简意图入口（`phone_action(request)`、`device_tool(request)`、`web_search(query)`、`deep_think(question)`、`task_control(request)`），复杂参数在端侧补齐；
+  - **`SIDECAR_ONLY`**（如豆包实时语音等纯语音流模型，`LiveProviderCapabilities.VOLC_SIDECAR_ONLY`）：不向语音流声明函数工具，由 `core/live/LiveIntentSidecar.kt` 监听 `InputTranscriptCompleted`（或话轮转写边界）做零推理快捷指令匹配与 Jev 意图分流，命中动作时主动打断语音流、端侧执行后再注入结果播报。
+- `core/live/GeminiLiveProtocol.kt` 与 `core/live/GeminiLiveClient.kt` 实现 Gemini BidiGenerateContent 协议编解码、模型列表分页拉取与 WebSocket 收发。客户端复用宿主连接池，入站控制事件与音频分片分离计数（拥塞时仅丢弃排队音频，绝不丢弃控制、转写、工具调用或用量帧），并对出站媒体载荷设上限。
+- `core/live/LiveTurnCoordinator.kt` 纯函数协调插话窗口、后台任务完成/审批通知注入与静默挂断策略（`LiveSessionPolicy`），按事件 `triggerResponse` 区分**主动开口播报**与**静默上下文同步**（机主在虚拟屏手动滑动/点按默认只静默刷新文本界面摘要，不抢麦插话、不堆积截图），并仅在主动播报且会话声明 `supportsVisualFrames` 时附带 JPEG 视频帧。
+- `app/personal/live/PersonalLiveRuntime.kt` 为每次通话创建独立的会话协程作用域，集中管理连接重连、电话占线暂挂、唤醒词让位与恢复、焦点屏幕感知截屏（前台虚拟屏已展示时优先零 OCR 读取虚拟屏画面）、`UsageLedger` 用量落盘及每日预算门禁。
 - `LiveSessionToolTracker` 按调用 ID 追踪在途工具协程：收到取消帧时立即中断对应协程、跳过尚未启动的排队调用并抑制已取消调用的回包，已完成动作的记录予以保留。
 - `LiveUserTextDeliverer` 统一处理通话期间的文字输入：连接或重连窗口内单次落盘并排队冲刷；发送失败或电话暂挂时直接抛错，不退回普通文字模型重复落盘。
 - `app/personal/live/LiveDuplexAudioEngine.kt` 与 `app/personal/live/PersonalLiveService.kt` 管理全双工采集播放、硬件回声消除与前台常驻，原生音频句柄由各自采集/播放读写协程在退出时释放。
 
-## 统一执行架构与 Jev 辅助判别
+## 双轨硬实时手机操控、按模态单脑主权与 Jev 扩展工具路由
 
-Mika Live 采用统一的「极速直控优先 + 超长任务自动委派 + 可选 Jev 判别辅助」架构：
+Mika Live 以同步音频流 `< 800ms` 硬实时红线隔离「快反射同步轨」与「非阻塞虚拟屏代理轨」，并按语音模型模态能力严格保证同一时刻只有一个大脑主导屏幕：
 
-- **低延迟语音直控（`quick_phone_act`）**：1–12 步常见手机操作（启动应用、点击、输入、滚动、返回、界面观察）直接由 `app/personal/live/LiveDirectPhoneController.kt` 在常驻实时虚拟屏上执行，使用 `app/cap/phone/a11y/PhoneWaitProfile.kt` 的 `TURBO` 等待配置，跳过人为拟人停顿的同时保留足够的异步点击探测与剪贴板粘贴稳定窗口。等待配置仅作用于当前活跃语音直控虚拟屏，不影响普通聊天或定时后台 `TaskRun` 的 `STANDARD` 配置。
-- **复杂长任务委派（`delegate_task`）**：超过 12 步的跨应用流程、网页浏览、运营商电话与沙箱文件操作自动交给后台 `TaskRun` 执行；若模型误将纯单应用启动发往 `delegate_task`，运行时自动在空闲时收敛为直控启动。
-- **Jev（`DecisionModel`）消歧与闲聊防误触（`core/live/LiveDirectDecision.kt`）**：复用用户已在设置中启用的 Jev 决策模型（`TaskEnvironment.decisionModel`）与 `IntentGate` 的 `intent_decision` 规则：
-  1. 本轮首次非只读手机操作前校验用户原话意图，高置信度（`>= 0.85`）判定为纯口头探讨（`DISCUSS`）时直接返回 `discuss_only` 阻止误打开/误点击；
-  2. 直控按控件归属 `actionRef`/`editRef` 合并同卡片子节点消除假歧义；当遇到字面未命中（`target_not_found`）或同名多按钮歧义（`ambiguous_target`）时，交由 Jev 结合用户原话、阅读序、归一化坐标与父容器上下文选点（概率与适用性双 `>= 0.85` 门禁），未启用或置信度不足时无副作用回退并附带实时截图供主模型补救。
+- **快反射同步轨（`quick_phone_act`，严格零云端大模型、零本地 OCR）**：1–12 步确定性手机动作（启动应用、`open_link` 深链与安卓子设置直达、点击、输入、滚动、返回、`observe` 画面观察）由 `app/personal/live/LiveDirectPhoneController.kt` 在常驻实时虚拟屏上使用 `app/cap/phone/a11y/PhoneWaitProfile.kt` 的 `TURBO` 等待配置执行。候选控件消歧仅允许亚秒级 Jev（`LIVE_FAST_DISAMBIG_TIMEOUT_MS`）选点；无论成功或未命中均保留完整 72 元素摘要并在密集页、`observe` 及未命中时直接附带虚拟屏 JPEG 返回多模态语音模型，由语音主脑看图单跳决策；首次打开应用时附带精简指南与已解锁深链摘要。
+- **非阻塞虚拟屏代理轨（`smart_phone_goal` / `LiveDirectPhoneController.startAsyncGoal` + `app/personal/live/LiveSmartPhoneRunner.kt`）**：面向跨多页筛选比对、滚轮调参（`phone_set_wheel`）等复杂目标，以及 `LITE_INTENT`/`SIDECAR_ONLY` 弱工具模型的复杂屏幕意图。调用后毫秒级立即返回 `running_on_stage` 让语音模型先自然开口应答，后台在同一常驻虚拟屏热会话串接 `RouteMatcher` + `Replayer` 经验路线回放与 `ModelRouter`（`Main`/`Light` + `KnowledgeStore` + 个人经验笔记 + `GuideCatalog` + `VisionService`），跑通后经 `RouteRecorder` 自动沉淀到 `FileRouteStore`，并向 `LiveTurnCoordinator` 投递 `StageGoalFinished` 在静默窗口播报结果；机主中途下达新屏幕指令时原子抢占取消并清理未投递旧阶段事件。
+- **高频系统能力与双路扩展路由（`app/personal/live/LiveExtendedToolRouter.kt`）**：
+  - `set_alarm_or_timer` 直连系统闹钟与倒计时能力（`phone_set_alarm`、`phone_set_timer`、`phone_show_alarms`，静默创建不弹虚拟屏）；
+  - `notices_read` 直连本地通知中心做毫秒级只读检索；
+  - `run_extended_tool(intent, details)` 由 `LiveDirectDecision.chooseExtendedToolsWithJev`（概率与适用性双 `>= 0.85` 门禁，无 Jev 时确定性词法回退）从 `schedule_*`、日历（`phone_add_calendar_event`、`phone_calendar_bulk_insert`）、`call_*`、`device_*`、`memory_*`/`profile_*`、`skill_*`、`run_*`、`self_*` 与已连接外部 MCP 插件能力中筛出高相关候选并经 `Light`/`Main` 模型单步填参执行；采用 750ms 快慢双路，慢调用立即释放同步通道返回 `running_async`，完成后经 `AsyncExtendedToolResult` 推送播报。
+- **超长任务委派（`delegate_task`）**：超过 12 步的跨应用复杂流程、网页浏览与沙箱文件操作交给后台 `TaskRun` 执行；纯单应用启动误调时自动收敛为直控启动。
+- **本地零延迟祈使放行与 Jev 控件消歧（`core/live/LiveDirectDecision.kt`）**：
+  1. 明确祈使操控话语（不含疑问、否定与过去时叙述）本地 `0ms` 直接放行（`isUnmistakableActionUtterance`），仅对疑似提问/闲聊/否定话语调用 Jev `IntentGate` 校验并在高置信度（`>= 0.85`）判定为 `DISCUSS` 时返回 `discuss_only`；
+  2. 直控按控件归属 `actionRef`/`editRef` 合并同卡片子节点消除假歧义，超密列表截断时自动合并 `phone_list_elements` 稳定引用；遇到字面未命中或同名多按钮歧义时由 Jev（双 `>= 0.85` 门禁）选点。
 
 ## 安全边界、资源调度与人工审批
 
-`LiveDirectPhoneController` 复用 Mika 现有的单入口与设备治理约束，不绕过安全关卡：
+`LiveDirectPhoneController`、`LiveSmartPhoneRunner` 与 `LiveExtendedToolRouter` 复用 Mika 统一执行入口与设备治理约束：
 
-- **统一资源互斥**：通过 `app/task/ResourceScheduler.kt` 登记直控占用的目标包名，并在虚拟屏上开启跨任务占用检查；一旦 `TaskRun` 启动或进入示范录制，直控立即让出虚拟屏与目标应用。
-- **逐动作实时门禁**：直控向 `ActionExecutor` 注入逐动作门禁，每次写动作前核对 `DeviceStateWatcher` 的锁屏、Shell 连接、应用切走状态以及用户在实时舞台上的触控接管；话轮切换时重置 `OperationGuards`，外发动作保持 `OutwardPacing` 节流，短信等私密界面继续受 `SmsPrivateScreen` 遮罩保护。
-- **仅限界面人工审批**：语音转写与模型参数均不能放行高风险或不可逆操作。直控以批处理来源运行模型步骤，遇到敏感动作立即拦截并经 `core/live/LiveDirectConfirmation.kt` 生成单次审批请求（`LiveConfirmationPrompt`），在界面确认卡片上交由用户本人点击批准或拒绝；后台任务的待批请求同样汇总到该卡片，只在用户点击按钮后放行对应单次操作。
+- **统一资源互斥**：通过 `app/task/ResourceScheduler.kt` 登记直控占用的目标包名，一旦后台 `TaskRun` 启动或进入示范录制，直控立即让出虚拟屏与目标应用。
+- **逐动作实时门禁**：每次写动作前核对 `DeviceStateWatcher` 的锁屏、Shell 连接、应用切走状态、非屏幕守卫（`OffScreenGuard`）以及用户在实时舞台上的触控接管；外发动作保持 `OutwardPacing` 节流，私密界面受 `SmsPrivateScreen` 遮罩保护。
+- **仅限界面人工审批**：语音转写与模型参数均不能放行高风险或不可逆操作。遇到敏感动作立即拦截并经 `core/live/LiveDirectConfirmation.kt` 生成单次审批请求（`LiveConfirmationPrompt`），在界面确认卡片上交由用户本人点击批准或拒绝；支付与验密动作强制要求用户在实时画面上亲手点按。
 
 ## 联网检索与深度推理
 
-- `app/personal/live/LiveWebSearchRunner.kt` 严格遵守 `WebSearchSettings` 的总开关与用户选定的搜索服务商，关闭或失败时如实返回原因，不暗自回退到未配置的服务商；检索结果的标题、链接与摘要均经 `Untrusted` 包裹后再交给模型。
-- `app/personal/live/LiveDeepThinkRunner.kt` 复用用户已配置的推理模型处理复杂分析问题，仅在联网搜索已开启时挂载搜索能力，不直接抓取任意网页地址，避免服务端重定向探测内网风险。
+- `app/personal/live/LiveWebSearchRunner.kt` 严格遵守 `WebSearchSettings` 总开关与选定服务商，检索结果均经 `Untrusted` 包裹后再交给模型。
+- `app/personal/live/LiveDeepThinkRunner.kt` 复用推理模型在后台独立推演，仅在搜索开启时挂载 `web_search`，绝不直接抓取任意网页地址。
 
 ## 验证
 
-核心与宿主单测覆盖：协议帧编解码、音频拥塞保控制帧、工具调用取消中断、跨重连文字单次落盘与防双路回退、极速等待参数隔离、直控逐动作锁屏/断连/触控门禁、后台任务抢占让位、高风险动作拦截与单次界面审批、搜索开关遵从与不可信包裹。真机重点验收双工回声消除、锁屏拦截、舞台触控接管与开关切换体验。
+核心与宿主单测覆盖：多模型三档契约与工具裁剪、协议帧编解码与 `InputTranscriptCompleted`、无视觉帧能力守卫、音频拥塞保控制帧、工具调用取消中断、端侧旁路零推理快捷解析与 Jev 意图分流、超密列表控件消歧与扩展工具动态路由、屏幕摘要瘦身与指南裁剪、高风险动作单次界面审批、搜索开关遵从与不可信包裹。

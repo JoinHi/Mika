@@ -27,8 +27,13 @@ import com.wangzan101.mika.core.live.LiveAsyncEvent
 import com.wangzan101.mika.core.live.LiveDirectDecision
 import com.wangzan101.mika.core.live.LiveFunctionCall
 import com.wangzan101.mika.core.live.LiveFunctionResponse
+import com.wangzan101.mika.core.live.LiveIntentSidecar
+import com.wangzan101.mika.core.live.LiveProviderCapabilities
 import com.wangzan101.mika.core.live.LiveRealtimeSession
 import com.wangzan101.mika.core.live.LiveScheduling
+import com.wangzan101.mika.core.live.LiveSessionConfig
+import com.wangzan101.mika.core.live.LiveSessionEvent
+import com.wangzan101.mika.core.live.LiveToolTier
 import com.wangzan101.mika.core.live.LiveTurnCoordinator
 import com.wangzan101.mika.core.live.LiveTurnSignalSnapshot
 import com.wangzan101.mika.core.model.ModelError
@@ -38,6 +43,7 @@ import com.wangzan101.mika.core.risk.IrrevAction
 import com.wangzan101.mika.core.usage.UsagePurpose
 import com.wangzan101.mika.core.usage.UsageSource
 import com.wangzan101.mika.i18n.tr
+import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.task.TaskService
 import com.wangzan101.mika.voice.WakeWordService
@@ -232,7 +238,7 @@ internal class LiveSessionToolTracker {
 
         if (responses.isNotEmpty() && session.sendToolResponses(responses)) {
             turnCoordinator.onToolResponseSent()
-            if (latestDeferredJpeg != null) {
+            if (latestDeferredJpeg != null && session.capabilities.supportsVisualFrames) {
                 session.sendVideoJpeg(latestDeferredJpeg)
             }
         }
@@ -407,6 +413,15 @@ class PersonalLiveRuntime internal constructor(
         decisionModelProvider = { app.tasks.decisionModel(app) },
         userUtteranceProvider = { currentTurnUtteranceSnapshot() ?: recentUserQuotes.peekLast() },
     )
+
+    private val extendedToolRouter = LiveExtendedToolRouter(
+        app = app,
+        scope = scope,
+        turnCoordinator = turnCoordinator,
+        directPhone = directPhone,
+        decisionModelProvider = { app.tasks.decisionModel(app) },
+        onRevealStage = { touchInteraction() },
+    )
     val directPhonePreview: StateFlow<Bitmap?> get() = directPhone.previewFrames
     val directPhonePipInput: StateFlow<PipInput?> get() = directPhone.pipInput
     val directPhoneApp: StateFlow<String?> get() = directPhone.foregroundApp
@@ -473,6 +488,8 @@ class PersonalLiveRuntime internal constructor(
     @Volatile private var resumptionHandle: String? = null
     @Volatile private var resumptionHandleAtMs: Long = 0L
     @Volatile private var includeNonBlockingFlag: Boolean = false
+    @Volatile private var sessionCapabilitiesOverride: LiveProviderCapabilities? = null
+    @Volatile private var sidecarInFlightRefs: CopyOnWriteArrayList<Job>? = null
     @Volatile private var suspendedSinceMs: Long = 0L
     @Volatile private var suspendedLastCallId: String? = null
     @Volatile private var pendingPostResumeNotice: String? = null
@@ -494,6 +511,20 @@ class PersonalLiveRuntime internal constructor(
             markUserTurnPendingRecovery(clean)
             audioController.clearPlayback()
             _uiState.update { it.copy(thinking = true, liveUserTranscript = clean, liveAssistantTranscript = "") }
+            val activeSession = currentSession
+            val activeScope = activeSessionScope
+            if (
+                activeSession != null &&
+                activeScope != null &&
+                activeSession.capabilities.toolTier == LiveToolTier.SIDECAR_ONLY
+            ) {
+                launchSidecarTurnIfNeeded(
+                    parentScope = activeScope,
+                    session = activeSession,
+                    utterance = clean,
+                    inFlightRegistry = sidecarInFlightRefs,
+                )
+            }
         },
         onSendFailedMessage = { tr(R.string.live_error_connect_failed) },
         onSuspendedMessage = { tr(R.string.live_status_suspended_call) },
@@ -503,6 +534,7 @@ class PersonalLiveRuntime internal constructor(
     private val assistantTurnBuffer = StringBuilder()
     private var currentTurnUserUtterance: String? = null
     private var currentTurnIntentAssessed: Boolean = false
+    private var sidecarHandledUtterance: String? = null
     private var unansweredUserTurnText: String? = null
     private var unansweredTurnAtMs: Long = 0L
     private val unansweredToolSummaries = ArrayList<String>()
@@ -610,6 +642,8 @@ class PersonalLiveRuntime internal constructor(
         resumptionHandle = null
         resumptionHandleAtMs = 0L
         includeNonBlockingFlag = false
+        sessionCapabilitiesOverride = null
+        sidecarInFlightRefs = null
         pendingPostResumeNotice = null
         audioFocusPreempted.value = false
         callResumeWatchJob?.cancel()
@@ -626,6 +660,7 @@ class PersonalLiveRuntime internal constructor(
             assistantTurnBuffer.setLength(0)
             currentTurnUserUtterance = null
             currentTurnIntentAssessed = false
+            sidecarHandledUtterance = null
             unansweredUserTurnText = null
             unansweredTurnAtMs = 0L
             unansweredToolSummaries.clear()
@@ -682,7 +717,12 @@ class PersonalLiveRuntime internal constructor(
         touchCoordinator.clear()
         webSearchRunner.cancelAll()
         deepThinkRunner.cancelAll()
-        scope.launch { directPhone.release() }
+        sidecarInFlightRefs = null
+        sessionCapabilitiesOverride = null
+        scope.launch {
+            directPhone.release()
+            extendedToolRouter.close()
+        }
         _uiState.update {
             it.copy(
                 phase = LiveSessionPhase.Idle,
@@ -794,7 +834,9 @@ class PersonalLiveRuntime internal constructor(
             val result = captured.payload
             val status = (result["status"]?.jsonPrimitive?.contentOrNull).orEmpty()
             if (status == "ok") {
-                captured.jpeg?.let { session.sendVideoJpeg(it) }
+                if (session.capabilities.supportsVisualFrames) {
+                    captured.jpeg?.let { session.sendVideoJpeg(it) }
+                }
                 val label = result["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val textSummary = result["screen_text"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 session.sendContextUpdate(
@@ -843,6 +885,7 @@ class PersonalLiveRuntime internal constructor(
         currentSession = null
         audioController.stop()
         touchCoordinator.clear()
+        extendedToolRouter.cancelAll()
         scope.launch { directPhone.release() }
         _uiState.update {
             it.copy(
@@ -941,20 +984,29 @@ class PersonalLiveRuntime internal constructor(
                 }
 
                 val searchEnabled = webSearchRunner.isSearchEnabled()
+                val noticesEnabled = FeatureFlags.get(app).proactive()
+                val plannedCaps = sessionCapabilitiesOverride ?: inferModelCapabilities(creds.model)
+                val effectiveHandle = candidateHandle?.takeIf { plannedCaps.supportsResumption }
                 val systemPrompt = PersonalLiveTools.buildSystemPrompt(
                     state = agent.state.value,
                     memoryText = runCatching { agent.memorySnapshot() }.getOrDefault(""),
                     searchEnabled = searchEnabled,
+                    noticesEnabled = noticesEnabled,
+                    toolTier = plannedCaps.toolTier,
                 )
-                val setup = GeminiLiveSetup(
+                val setup = LiveSessionConfig(
                     model = creds.model,
                     systemInstruction = systemPrompt,
                     voiceName = creds.voiceName,
-                    tools = PersonalLiveTools.toolsForMode(searchEnabled = searchEnabled),
-                    resumptionHandle = candidateHandle,
+                    tools = PersonalLiveTools.toolsForTier(
+                        tier = plannedCaps.toolTier,
+                        searchEnabled = searchEnabled,
+                        noticesEnabled = noticesEnabled,
+                    ),
+                    resumptionHandle = effectiveHandle,
                     enableSlidingWindow = true,
                     enableTranscription = true,
-                    includeNonBlockingBehavior = includeNonBlockingFlag,
+                    includeNonBlockingBehavior = includeNonBlockingFlag && plannedCaps.supportsNonBlockingTools,
                 )
 
                 val session = try {
@@ -972,7 +1024,7 @@ class PersonalLiveRuntime internal constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
-                    if (!candidateHandle.isNullOrBlank()) {
+                    if (!effectiveHandle.isNullOrBlank()) {
                         Log.w(TAG, "Gemini Live resumption handle rejected; falling back immediately to fresh session", t)
                         resumptionHandle = null
                         resumptionHandleAtMs = 0L
@@ -992,6 +1044,7 @@ class PersonalLiveRuntime internal constructor(
                     continue
                 }
 
+                sessionCapabilitiesOverride = session.capabilities
                 pauseWakeWordForLiveAudio()
                 currentSession = session
                 val audioStarted = audioController.start(initialMuted = _uiState.value.muted)
@@ -1035,6 +1088,7 @@ class PersonalLiveRuntime internal constructor(
 
                 val watcherJob = launch { watchTasksAndIdle(session, sessionScope) }
                 val inFlightToolJobs = CopyOnWriteArrayList<Job>()
+                sidecarInFlightRefs = inFlightToolJobs
                 val toolTracker = LiveSessionToolTracker()
                 var seamlessReconnect = false
                 var closedReason = ""
@@ -1043,19 +1097,19 @@ class PersonalLiveRuntime internal constructor(
                 try {
                     session.events.collect { event ->
                         when (event) {
-                            GeminiLiveEvent.SetupComplete -> Unit
-                            is GeminiLiveEvent.SessionResumptionUpdate -> {
+                            LiveSessionEvent.SetupComplete -> Unit
+                            is LiveSessionEvent.SessionResumptionUpdate -> {
                                 if (event.resumable && !event.newHandle.isNullOrBlank()) {
                                     resumptionHandle = event.newHandle
                                     resumptionHandleAtMs = SystemClock.elapsedRealtime()
                                 }
                             }
-                            is GeminiLiveEvent.GoAway -> {
+                            is LiveSessionEvent.GoAway -> {
                                 Log.i(TAG, "Received GoAway (timeLeft=${event.timeLeft}); scheduling seamless reconnect")
                                 seamlessReconnect = true
                                 session.close()
                             }
-                            GeminiLiveEvent.Interrupted -> {
+                            LiveSessionEvent.Interrupted -> {
                                 userSpeechIdleJob?.cancel()
                                 userSpeechIdleJob = null
                                 turnCoordinator.onAssistantTurnBoundary()
@@ -1067,7 +1121,7 @@ class PersonalLiveRuntime internal constructor(
                                 }
                                 scheduleSubtitleClearAfterDrain(sessionScope)
                             }
-                            is GeminiLiveEvent.InputTranscriptDelta -> {
+                            is LiveSessionEvent.InputTranscriptDelta -> {
                                 hadSessionTraffic = true
                                 touchInteraction()
                                 cancelSubtitleClearJob()
@@ -1088,7 +1142,44 @@ class PersonalLiveRuntime internal constructor(
                                     scheduleUserSpeechThinkingHint(sessionScope)
                                 }
                             }
-                            is GeminiLiveEvent.AudioDelta -> {
+                            is LiveSessionEvent.InputTranscriptCompleted -> {
+                                hadSessionTraffic = true
+                                userSpeechIdleJob?.cancel()
+                                userSpeechIdleJob = null
+                                touchInteraction()
+                                cancelSubtitleClearJob()
+                                commitAssistantTurnIfAny()
+                                val finalUtterance = synchronized(this@PersonalLiveRuntime) {
+                                    val buffered = userTurnBuffer.toString().trim()
+                                    userTurnBuffer.setLength(0)
+                                    val completed = event.text.trim()
+                                    when {
+                                        completed.isEmpty() -> buffered
+                                        buffered.isEmpty() -> completed
+                                        completed.contains(buffered) -> completed
+                                        buffered.contains(completed) -> buffered
+                                        else -> completed
+                                    }
+                                }
+                                if (finalUtterance.isNotEmpty()) {
+                                    commitExplicitUserTurn(finalUtterance)
+                                    _uiState.update {
+                                        it.copy(
+                                            thinking = true,
+                                            liveUserTranscript = finalUtterance,
+                                        )
+                                    }
+                                    if (session.capabilities.toolTier == LiveToolTier.SIDECAR_ONLY) {
+                                        launchSidecarTurnIfNeeded(
+                                            parentScope = this,
+                                            session = session,
+                                            utterance = finalUtterance,
+                                            inFlightRegistry = inFlightToolJobs,
+                                        )
+                                    }
+                                }
+                            }
+                            is LiveSessionEvent.AudioDelta -> {
                                 hadSessionTraffic = true
                                 userSpeechIdleJob?.cancel()
                                 userSpeechIdleJob = null
@@ -1096,11 +1187,19 @@ class PersonalLiveRuntime internal constructor(
                                 markAssistantEmittedInTurn()
                                 touchInteraction()
                                 turnCoordinator.onAssistantActivity()
-                                commitUserTurnIfAny()
+                                val committed = commitUserTurnIfAny()
+                                if (committed != null && session.capabilities.toolTier == LiveToolTier.SIDECAR_ONLY) {
+                                    launchSidecarTurnIfNeeded(
+                                        parentScope = this,
+                                        session = session,
+                                        utterance = committed,
+                                        inFlightRegistry = inFlightToolJobs,
+                                    )
+                                }
                                 _uiState.update { it.copy(thinking = false) }
                                 audioController.enqueueOutputPcm24k(event.pcm24kLe)
                             }
-                            is GeminiLiveEvent.OutputTranscriptDelta -> {
+                            is LiveSessionEvent.OutputTranscriptDelta -> {
                                 hadSessionTraffic = true
                                 userSpeechIdleJob?.cancel()
                                 userSpeechIdleJob = null
@@ -1108,7 +1207,15 @@ class PersonalLiveRuntime internal constructor(
                                 markAssistantEmittedInTurn()
                                 touchInteraction()
                                 turnCoordinator.onAssistantActivity()
-                                commitUserTurnIfAny()
+                                val committed = commitUserTurnIfAny()
+                                if (committed != null && session.capabilities.toolTier == LiveToolTier.SIDECAR_ONLY) {
+                                    launchSidecarTurnIfNeeded(
+                                        parentScope = this,
+                                        session = session,
+                                        utterance = committed,
+                                        inFlightRegistry = inFlightToolJobs,
+                                    )
+                                }
                                 val snapshot = synchronized(this@PersonalLiveRuntime) {
                                     assistantTurnBuffer.append(event.text)
                                     assistantTurnBuffer.toString().trim()
@@ -1123,12 +1230,20 @@ class PersonalLiveRuntime internal constructor(
                                     }
                                 }
                             }
-                            GeminiLiveEvent.TurnComplete -> {
+                            LiveSessionEvent.TurnComplete -> {
                                 hadSessionTraffic = true
                                 userSpeechIdleJob?.cancel()
                                 userSpeechIdleJob = null
                                 turnCoordinator.onAssistantTurnBoundary()
-                                commitUserTurnIfAny()
+                                val committed = commitUserTurnIfAny()
+                                if (committed != null && session.capabilities.toolTier == LiveToolTier.SIDECAR_ONLY) {
+                                    launchSidecarTurnIfNeeded(
+                                        parentScope = this,
+                                        session = session,
+                                        utterance = committed,
+                                        inFlightRegistry = inFlightToolJobs,
+                                    )
+                                }
                                 clearCurrentTurnIntentState()
                                 _uiState.update { it.copy(thinking = false) }
                                 if (commitAssistantTurnIfAny() || consumeAssistantEmittedFlag()) {
@@ -1136,7 +1251,7 @@ class PersonalLiveRuntime internal constructor(
                                 }
                                 scheduleSubtitleClearAfterDrain(sessionScope)
                             }
-                            is GeminiLiveEvent.UsageReport -> {
+                            is LiveSessionEvent.UsageReport -> {
                                 app.usage.record(
                                     UsageSource(
                                         providerId = creds.provider.id,
@@ -1159,7 +1274,7 @@ class PersonalLiveRuntime internal constructor(
                                     }
                                 }
                             }
-                            is GeminiLiveEvent.ToolCalls -> {
+                            is LiveSessionEvent.ToolCalls -> {
                                 hadSessionTraffic = true
                                 userSpeechIdleJob?.cancel()
                                 userSpeechIdleJob = null
@@ -1175,7 +1290,7 @@ class PersonalLiveRuntime internal constructor(
                                         toolTracker.runBatch(
                                             session = session,
                                             calls = calls,
-                                            includeNonBlockingFlag = includeNonBlockingFlag,
+                                            includeNonBlockingFlag = includeNonBlockingFlag && session.capabilities.supportsNonBlockingTools,
                                             turnCoordinator = turnCoordinator,
                                             onStepCompleted = { call, step ->
                                                 markToolExecutedPendingRecovery(call.name, step.output)
@@ -1185,17 +1300,18 @@ class PersonalLiveRuntime internal constructor(
                                     }
                                 }
                             }
-                            is GeminiLiveEvent.ToolCallCancelled -> {
+                            is LiveSessionEvent.ToolCallCancelled -> {
                                 Log.i(TAG, "Cancelling tool calls requested by server: ${event.ids}")
                                 toolTracker.cancelCalls(event.ids)
                             }
-                            is GeminiLiveEvent.Closed -> {
+                            is LiveSessionEvent.Closed -> {
                                 closedCode = event.code
                                 closedReason = event.reason
                             }
                         }
                     }
                 } finally {
+                    if (sidecarInFlightRefs === inFlightToolJobs) sidecarInFlightRefs = null
                     watcherJob.cancel()
                     if (isActive && _uiState.value.phase.isRunning && _uiState.value.phase != LiveSessionPhase.SuspendedByCall && inFlightToolJobs.isNotEmpty()) {
                         withTimeoutOrNull(TOOL_FINISH_GRACE_MS) {
@@ -1268,6 +1384,8 @@ class PersonalLiveRuntime internal constructor(
             val snapshot = agent.state.value
             val activeTasks = snapshot.tasks.filterNot { it.terminal }
             val hasAsyncWork = activeTasks.isNotEmpty() ||
+                directPhone.hasActiveWork ||
+                extendedToolRouter.hasActiveWork ||
                 deepThinkRunner.hasActiveThinking ||
                 touchCoordinator.isUserTouching ||
                 turnCoordinator.hasPendingEvents() ||
@@ -1388,6 +1506,56 @@ class PersonalLiveRuntime internal constructor(
         } ?: app.taskState.runs.value.isEmpty()
     }
 
+    private fun launchAsyncStageGoalForLive(
+        goal: String,
+        appName: String?,
+        callTag: String,
+    ): ExecutedToolStep {
+        turnCoordinator.cancelPendingStageEvents()
+        return when (
+            val launch = directPhone.startAsyncGoal(
+                goal = goal,
+                appName = appName,
+                callTag = callTag,
+            ) { goalId, res ->
+                val stopReason = res.payload["stop_reason"]?.jsonPrimitive?.contentOrNull
+                    ?: res.payload["status"]?.jsonPrimitive?.contentOrNull?.takeIf { !res.ok }
+                val summary = res.payload["summary"]?.jsonPrimitive?.contentOrNull
+                    ?: res.payload["message"]?.jsonPrimitive?.contentOrNull
+                    ?: if (res.ok) "已完成 ${res.completedSteps} 步界面操作。" else "未能完成全部界面步骤。"
+                val screenOverview = (res.payload["screen"] as? JsonObject)?.toString()?.take(800).orEmpty()
+                markToolExecutedPendingRecovery("smart_phone_goal", res.payload)
+                turnCoordinator.enqueue(
+                    LiveAsyncEvent.StageGoalFinished(
+                        goalId = goalId,
+                        goal = goal,
+                        ok = res.ok,
+                        stopReason = stopReason,
+                        summary = summary,
+                        screenOverview = screenOverview,
+                        jpegFrame = res.jpegFrame,
+                    ),
+                )
+            }
+        ) {
+            is LiveDirectPhoneController.DirectStageLaunch.Started -> ExecutedToolStep(
+                output = buildJsonObject {
+                    put("ok", true)
+                    put("status", "running_on_stage")
+                    put("goal_id", launch.goalId)
+                    put("goal", goal)
+                    appName?.let { put("app", it) }
+                    put("message", "已在实时虚拟屏启动多步操作，请先简短自然应答机主（如“好的，正在帮您处理”），切勿编造结果；完成后系统会自动推送结果给你播报。")
+                },
+                scheduling = LiveScheduling.WHEN_IDLE,
+            )
+            is LiveDirectPhoneController.DirectStageLaunch.Rejected -> ExecutedToolStep(
+                output = launch.result.payload,
+                scheduling = LiveScheduling.WHEN_IDLE,
+            )
+        }
+    }
+
     private suspend fun executeSingleToolCall(call: LiveFunctionCall): ExecutedToolStep {
         fun str(key: String): String = call.args[key]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
 
@@ -1398,11 +1566,93 @@ class PersonalLiveRuntime internal constructor(
                     if (shouldBlockPhoneToolAsDiscussion(commands)) {
                         return ExecutedToolStep(buildDiscussOnlyPayload(), null)
                     }
+                    turnCoordinator.cancelPendingStageEvents()
                     if (app.taskState.runs.value.isNotEmpty()) {
                         preemptRunningPhoneTasks()
                     }
                     val res = directPhone.act(commands, callTag = call.id)
                     ExecutedToolStep(res.payload, null, deferredJpeg = res.jpegFrame)
+                }
+                PersonalLiveTools.SMART_PHONE_GOAL_NAME -> {
+                    if (shouldBlockPhoneToolAsDiscussion(commands = null)) {
+                        return ExecutedToolStep(buildDiscussOnlyPayload(), null)
+                    }
+                    val goal = str("goal")
+                    val appName = str("appName").takeIf { it.isNotEmpty() }
+                    if (app.taskState.runs.value.isNotEmpty()) {
+                        preemptRunningPhoneTasks()
+                    }
+                    launchAsyncStageGoalForLive(goal = goal, appName = appName, callTag = call.id)
+                }
+                PersonalLiveTools.SET_ALARM_OR_TIMER_NAME -> {
+                    val out = extendedToolRouter.executeSetAlarmOrTimer(call.args, callTag = call.id)
+                    ExecutedToolStep(out, null)
+                }
+                PersonalLiveTools.NOTICES_READ_NAME -> {
+                    val out = extendedToolRouter.executeNoticesRead(call.args, callTag = call.id)
+                    ExecutedToolStep(out, null)
+                }
+                PersonalLiveTools.RUN_EXTENDED_TOOL_NAME -> {
+                    val out = extendedToolRouter.executeExtendedToolForLive(
+                        intent = str("intent"),
+                        details = str("details"),
+                        userUtterance = currentTurnUtteranceSnapshot(),
+                        recentUserQuotes = recentUserQuotes.toList(),
+                        callTag = call.id,
+                    )
+                    ExecutedToolStep(out, LiveScheduling.WHEN_IDLE)
+                }
+                PersonalLiveTools.LITE_PHONE_ACTION_NAME -> {
+                    val request = str("request")
+                    if (isCaptureUserScreenIntent(request)) {
+                        val captured = captureFocusAwareScreenPayload(
+                            explicitMainScreenOnly = isExplicitPhysicalMainScreenIntent(request),
+                        )
+                        ExecutedToolStep(captured.payload, LiveScheduling.WHEN_IDLE, deferredJpeg = captured.jpeg)
+                    } else {
+                        if (shouldBlockPhoneToolAsDiscussion(commands = null)) {
+                            return ExecutedToolStep(buildDiscussOnlyPayload(), null)
+                        }
+                        if (app.taskState.runs.value.isNotEmpty()) {
+                            preemptRunningPhoneTasks()
+                        }
+                        when (val fast = LiveIntentSidecar.parseFastPhoneCommand(request)) {
+                            is LiveIntentSidecar.FastPhoneCommand.CloseStage -> {
+                                turnCoordinator.cancelPendingStageEvents()
+                                directPhone.release()
+                                _retainedStage.value = null
+                                ExecutedToolStep(
+                                    buildJsonObject {
+                                        put("ok", true)
+                                        put("status", "closed_virtual_screen")
+                                        put("message", "已关闭实时虚拟屏幕。")
+                                    },
+                                    null,
+                                )
+                            }
+                            null -> {
+                                launchAsyncStageGoalForLive(goal = request, appName = null, callTag = call.id)
+                            }
+                            else -> {
+                                turnCoordinator.cancelPendingStageEvents()
+                                val res = directPhone.act(fast.toQuickPhoneActCommands(), callTag = call.id)
+                                ExecutedToolStep(res.payload, null, deferredJpeg = res.jpegFrame)
+                            }
+                        }
+                    }
+                }
+                PersonalLiveTools.LITE_DEVICE_TOOL_NAME -> {
+                    val request = str("request")
+                    val out = extendedToolRouter.executeExtendedToolForLive(
+                        intent = request,
+                        userUtterance = currentTurnUtteranceSnapshot() ?: request,
+                        recentUserQuotes = recentUserQuotes.toList(),
+                        callTag = call.id,
+                    )
+                    ExecutedToolStep(out, LiveScheduling.WHEN_IDLE)
+                }
+                PersonalLiveTools.LITE_TASK_CONTROL_NAME -> {
+                    executeLiteTaskControl(str("request"))
                 }
                 PersonalLiveTools.WEB_SEARCH_NAME -> {
                     val query = str("query")
@@ -1430,6 +1680,7 @@ class PersonalLiveRuntime internal constructor(
                     }
                     val goal = str("goal")
                     val title = str("title")
+                    turnCoordinator.cancelPendingStageEvents()
                     directPhone.cancelInFlightAct()
                     if (app.taskState.runs.value.isNotEmpty()) {
                         preemptRunningPhoneTasks()
@@ -1491,14 +1742,31 @@ class PersonalLiveRuntime internal constructor(
                     )
                 }
                 "cancel_task" -> {
-                    val res = agent.cancelLiveTask(str("task_id"))
-                    ExecutedToolStep(
-                        buildJsonObject {
-                            put("status", "ok")
-                            put("detail", res)
-                        },
-                        LiveScheduling.SILENT,
-                    )
+                    val taskId = str("task_id")
+                    if (taskId.isBlank() && directPhone.hasActiveWork) {
+                        turnCoordinator.cancelPendingStageEvents()
+                        directPhone.cancelInFlightAct()
+                        ExecutedToolStep(
+                            buildJsonObject {
+                                put("status", "ok")
+                                put("detail", "已停止当前虚拟屏操作。")
+                            },
+                            LiveScheduling.SILENT,
+                        )
+                    } else {
+                        val res = agent.cancelLiveTask(taskId)
+                        if (directPhone.hasActiveWork) {
+                            turnCoordinator.cancelPendingStageEvents()
+                            directPhone.cancelInFlightAct()
+                        }
+                        ExecutedToolStep(
+                            buildJsonObject {
+                                put("status", "ok")
+                                put("detail", res)
+                            },
+                            LiveScheduling.SILENT,
+                        )
+                    }
                 }
                 "answer_task" -> {
                     val taskId = str("task_id")
@@ -1564,7 +1832,10 @@ class PersonalLiveRuntime internal constructor(
                     }
                 }
                 "capture_user_screen" -> {
-                    val captured = captureMainScreenPayload()
+                    val utterance = currentTurnUtteranceSnapshot().orEmpty()
+                    val captured = captureFocusAwareScreenPayload(
+                        explicitMainScreenOnly = isExplicitPhysicalMainScreenIntent(utterance),
+                    )
                     ExecutedToolStep(captured.payload, LiveScheduling.WHEN_IDLE, deferredJpeg = captured.jpeg)
                 }
                 "remember" -> {
@@ -1638,6 +1909,40 @@ class PersonalLiveRuntime internal constructor(
     internal fun encodeGuidanceJpeg(bmp: Bitmap?): ByteArray? =
         bmp?.takeUnless { it.isRecycled }?.let { encodeScaledJpeg(it, maxEdge = 768, quality = 68) }
 
+    /**
+     * 焦点屏幕感知截屏：
+     * - 当 Mika 自身处于前台且实时虚拟屏正在展示（`directPhonePreview.value != null`），且机主并未点名要截外部物理主屏时，
+     *   直接零 OCR 读取当前虚拟屏画面与控件摘要（`< 80ms`），杜绝误截到 Mika 外壳或漏看虚拟屏图片；
+     * - 当机主已切出 Mika 看外部应用或尚未打开实时虚拟屏时，回退至 `MediaProjection` 主屏截屏。
+     */
+    private suspend fun captureFocusAwareScreenPayload(explicitMainScreenOnly: Boolean): CapturedMainScreen {
+        if (!explicitMainScreenOnly && app.foreground.visible.value && directPhonePreview.value != null) {
+            val stageObs = directPhone.observeActiveStageIfOpen()
+            if (stageObs != null) {
+                if (stageObs.blocked) {
+                    return CapturedMainScreen(
+                        buildJsonObject {
+                            put("status", "blocked_secure_window")
+                            put("source", "virtual_screen")
+                            put("app", stageObs.appLabel)
+                            put("reason", "当前虚拟屏窗口启用了防截屏或私密保护，无法获取画面")
+                        },
+                    )
+                }
+                return CapturedMainScreen(
+                    payload = buildJsonObject {
+                        put("status", "ok")
+                        put("source", "virtual_screen")
+                        put("app", stageObs.appLabel)
+                        put("screen_text", stageObs.screenText.take(2500))
+                    },
+                    jpeg = stageObs.jpegFrame,
+                )
+            }
+        }
+        return captureMainScreenPayload()
+    }
+
     private suspend fun captureMainScreenPayload(): CapturedMainScreen {
         val shot = app.capsule.captureMainScreenForLive()
             ?: return CapturedMainScreen(
@@ -1673,6 +1978,7 @@ class PersonalLiveRuntime internal constructor(
     }
 
     private fun sendTaskFrameIfAvailable(session: LiveRealtimeSession, bitmap: Bitmap?): Boolean {
+        if (!session.capabilities.supportsVisualFrames) return false
         val jpeg = encodeTaskFrame(bitmap) ?: return false
         return session.sendVideoJpeg(jpeg)
     }
@@ -1696,19 +2002,27 @@ class PersonalLiveRuntime internal constructor(
         }
     }.getOrNull()
 
-    private fun commitUserTurnIfAny() {
+    private fun commitUserTurnIfAny(): String? {
         val text = synchronized(this) {
             val raw = userTurnBuffer.toString().trim()
             userTurnBuffer.setLength(0)
             raw
         }
         if (text.isNotEmpty()) {
-            directPhone.onNewUserTurn()
-            recordTurnUserUtterance(text)
-            markUserTurnPendingRecovery(text)
-            recordRecentUserQuote(text)
-            agent.recordLiveMessage("user", text)
+            commitExplicitUserTurn(text)
+            return text
         }
+        return null
+    }
+
+    private fun commitExplicitUserTurn(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        directPhone.onNewUserTurn()
+        recordTurnUserUtterance(clean)
+        markUserTurnPendingRecovery(clean)
+        recordRecentUserQuote(clean)
+        agent.recordLiveMessage("user", clean)
     }
 
     private fun recordTurnUserUtterance(text: String) {
@@ -1725,6 +2039,7 @@ class PersonalLiveRuntime internal constructor(
         synchronized(this) {
             currentTurnUserUtterance = null
             currentTurnIntentAssessed = false
+            sidecarHandledUtterance = null
         }
     }
 
@@ -1768,7 +2083,6 @@ class PersonalLiveRuntime internal constructor(
 
     private suspend fun shouldBlockPhoneToolAsDiscussion(commands: JsonArray?): Boolean {
         if (commands != null && LiveDirectDecision.isPassiveObservationOnly(commands)) return false
-        val decision = app.tasks.decisionModel(app) ?: return false
         val utterance = synchronized(this) {
             if (currentTurnIntentAssessed) return@synchronized null
             val committed = currentTurnUserUtterance?.trim().orEmpty()
@@ -1782,11 +2096,14 @@ class PersonalLiveRuntime internal constructor(
             currentTurnIntentAssessed = true
             merged
         } ?: return false
+        if (LiveDirectDecision.isUnmistakableActionUtterance(utterance)) return false
+        val decision = app.tasks.decisionModel(app) ?: return false
         return LiveDirectDecision.shouldBlockAsDiscussion(
             decision = decision,
             currentTurnUserText = utterance,
             recentContext = recentConversationContextForIntent(utterance),
             commands = commands,
+            timeoutMs = LiveDirectDecision.LIVE_FAST_INTENT_TIMEOUT_MS,
         )
     }
 
@@ -1861,6 +2178,277 @@ class PersonalLiveRuntime internal constructor(
         }
     }
 
+    private fun launchSidecarTurnIfNeeded(
+        parentScope: CoroutineScope,
+        session: LiveRealtimeSession,
+        utterance: String,
+        inFlightRegistry: CopyOnWriteArrayList<Job>?,
+    ) {
+        val clean = utterance.trim()
+        if (clean.length < 2) return
+        val shouldRun = synchronized(this) {
+            if (sidecarHandledUtterance == clean) {
+                false
+            } else {
+                sidecarHandledUtterance = clean
+                true
+            }
+        }
+        if (!shouldRun) return
+        val registry = inFlightRegistry ?: CopyOnWriteArrayList()
+        turnCoordinator.launchToolWork(
+            parentScope = parentScope,
+            inFlightRegistry = registry,
+        ) {
+            executeSidecarTurn(session, clean)
+        }
+    }
+
+    private suspend fun executeSidecarTurn(
+        session: LiveRealtimeSession,
+        utterance: String,
+    ) {
+        try {
+            when (val fast = LiveIntentSidecar.parseFastPhoneCommand(utterance)) {
+                is LiveIntentSidecar.FastPhoneCommand.CloseStage -> {
+                    session.cancelCurrentResponse()
+                    audioController.clearPlayback()
+                    turnCoordinator.cancelPendingStageEvents()
+                    directPhone.release()
+                    _retainedStage.value = null
+                    turnCoordinator.enqueue(
+                        LiveAsyncEvent.DirectConfirmationFeedback(
+                            "[系统事件·端侧旁路已关闭实时虚拟屏]\n请简短自然地告诉机主已收起虚拟屏幕。",
+                        ),
+                    )
+                    return
+                }
+                null -> Unit
+                else -> {
+                    session.cancelCurrentResponse()
+                    audioController.clearPlayback()
+                    turnCoordinator.cancelPendingStageEvents()
+                    if (app.taskState.runs.value.isNotEmpty()) {
+                        preemptRunningPhoneTasks()
+                    }
+                    val res = directPhone.act(fast.toQuickPhoneActCommands(), callTag = "sidecar_fast")
+                    markToolExecutedPendingRecovery("sidecar_fast_phone", res.payload)
+                    turnCoordinator.enqueue(
+                        LiveAsyncEvent.DirectConfirmationFeedback(
+                            buildSidecarFeedbackPrompt("手机快捷操作", res.payload),
+                            res.jpegFrame,
+                        ),
+                    )
+                    return
+                }
+            }
+
+            val bucket = LiveIntentSidecar.classifyTurnIntentWithJev(
+                decision = app.tasks.decisionModel(app),
+                utterance = utterance,
+                recentContext = recentConversationContextForIntent(utterance),
+                searchEnabled = webSearchRunner.isSearchEnabled(),
+            )
+            when (bucket) {
+                LiveIntentSidecar.SidecarTurnBucket.DISCUSS -> return
+                LiveIntentSidecar.SidecarTurnBucket.PHONE_ACT -> {
+                    if (isCaptureUserScreenIntent(utterance)) {
+                        session.cancelCurrentResponse()
+                        audioController.clearPlayback()
+                        val captured = captureFocusAwareScreenPayload(
+                            explicitMainScreenOnly = isExplicitPhysicalMainScreenIntent(utterance),
+                        )
+                        markToolExecutedPendingRecovery("sidecar_capture_screen", captured.payload)
+                        turnCoordinator.enqueue(
+                            LiveAsyncEvent.DirectConfirmationFeedback(
+                                buildSidecarFeedbackPrompt("读取屏幕画面", captured.payload),
+                                captured.jpeg,
+                            ),
+                        )
+                    } else {
+                        if (app.taskState.runs.value.isNotEmpty()) {
+                            preemptRunningPhoneTasks()
+                        }
+                        // 非阻塞启动虚拟屏代理：保留语音模型简短“稍等正在帮您看”的自然过渡，完成后经 StageGoalFinished 自动播报
+                        launchAsyncStageGoalForLive(goal = utterance, appName = null, callTag = "sidecar_goal")
+                    }
+                }
+                LiveIntentSidecar.SidecarTurnBucket.EXTENDED_TOOL -> {
+                    val out = extendedToolRouter.executeExtendedToolForLive(
+                        intent = utterance,
+                        userUtterance = utterance,
+                        recentUserQuotes = recentUserQuotes.toList(),
+                        callTag = "sidecar_ext",
+                    )
+                    if (out["status"]?.jsonPrimitive?.contentOrNull != "running_async") {
+                        session.cancelCurrentResponse()
+                        audioController.clearPlayback()
+                        markToolExecutedPendingRecovery("sidecar_extended_tool", out)
+                        turnCoordinator.enqueue(
+                            LiveAsyncEvent.DirectConfirmationFeedback(
+                                buildSidecarFeedbackPrompt("系统工具执行", out),
+                            ),
+                        )
+                    }
+                }
+                LiveIntentSidecar.SidecarTurnBucket.WEB_SEARCH -> {
+                    val out = webSearchRunner.searchForLiveTool(utterance, null)
+                    if (out["status"]?.jsonPrimitive?.contentOrNull != "searching_async") {
+                        session.cancelCurrentResponse()
+                        audioController.clearPlayback()
+                        markToolExecutedPendingRecovery("sidecar_web_search", out)
+                        turnCoordinator.enqueue(
+                            LiveAsyncEvent.AsyncSearchResult(
+                                query = utterance,
+                                summary = out.toString().take(2_000),
+                            ),
+                        )
+                    }
+                }
+                LiveIntentSidecar.SidecarTurnBucket.DEEP_THINK -> {
+                    val out = deepThinkRunner.startThink(utterance, "", recentUserQuotesSnapshot())
+                    markToolExecutedPendingRecovery("sidecar_deep_think", out)
+                }
+                LiveIntentSidecar.SidecarTurnBucket.TASK_CONTROL -> {
+                    session.cancelCurrentResponse()
+                    audioController.clearPlayback()
+                    val step = executeLiteTaskControl(utterance)
+                    markToolExecutedPendingRecovery("sidecar_task_control", step.output)
+                    turnCoordinator.enqueue(
+                        LiveAsyncEvent.DirectConfirmationFeedback(
+                            buildSidecarFeedbackPrompt("后台任务管理", step.output),
+                            step.deferredJpeg,
+                        ),
+                    )
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Sidecar turn execution failed", e)
+        }
+    }
+
+    private fun executeLiteTaskControl(request: String): ExecutedToolStep {
+        val clean = request.trim()
+        val activeTasks = agent.state.value.tasks.filterNot { it.terminal }
+        val targetTask = activeTasks.lastOrNull()
+        val lower = clean.lowercase()
+        if (listOf("取消", "停止", "停下", "别做", "算了", "cancel", "stop").any { it in lower }) {
+            if (deepThinkRunner.hasActiveThinking && (targetTask == null || "思考" in clean)) {
+                return ExecutedToolStep(
+                    deepThinkRunner.steerOrCancel(thinkIdRaw = "", actionRaw = "cancel", noteRaw = clean),
+                    LiveScheduling.SILENT,
+                )
+            }
+            if (targetTask == null) {
+                if (directPhone.hasActiveWork) {
+                    turnCoordinator.cancelPendingStageEvents()
+                    directPhone.cancelInFlightAct()
+                    return ExecutedToolStep(
+                        buildJsonObject {
+                            put("status", "ok")
+                            put("detail", "已停止当前虚拟屏手机操作。")
+                        },
+                        LiveScheduling.WHEN_IDLE,
+                    )
+                }
+                return ExecutedToolStep(
+                    buildJsonObject {
+                        put("status", "idle")
+                        put("message", "当前没有正在运行的后台任务。")
+                    },
+                    LiveScheduling.WHEN_IDLE,
+                )
+            }
+            val detail = agent.cancelLiveTask(targetTask.id)
+            return ExecutedToolStep(
+                buildJsonObject {
+                    put("status", "ok")
+                    put("task_id", targetTask.id)
+                    put("detail", detail)
+                },
+                LiveScheduling.WHEN_IDLE,
+            )
+        }
+        if (listOf("画面", "进度", "哪一步", "怎么样了", "看下", "看看").any { it in clean }) {
+            if (targetTask != null) {
+                val run = app.taskState.run(targetTask.conversationId)
+                val jpeg = encodeTaskFrame(run?.phoneFrames?.value)
+                return ExecutedToolStep(
+                    buildJsonObject {
+                        put("status", targetTask.status)
+                        put("task_id", targetTask.id)
+                        put("title", targetTask.title)
+                        put("detail", targetTask.detail)
+                    },
+                    LiveScheduling.WHEN_IDLE,
+                    deferredJpeg = jpeg,
+                )
+            }
+            return ExecutedToolStep(
+                buildJsonObject {
+                    put("status", "idle")
+                    put("message", "当前没有正在运行的后台长任务。")
+                },
+                LiveScheduling.WHEN_IDLE,
+            )
+        }
+        if (targetTask != null) {
+            val run = app.taskState.run(targetTask.conversationId)
+            if (run?.state?.value is TaskState.WaitingInput) {
+                TaskService.answer(app, clean, run.key)
+                return ExecutedToolStep(
+                    buildJsonObject {
+                        put("status", "answered")
+                        put("task_id", targetTask.id)
+                    },
+                    LiveScheduling.SILENT,
+                )
+            }
+            val detail = agent.reviseLiveTask(targetTask.id, clean)
+            return ExecutedToolStep(
+                buildJsonObject {
+                    put("status", "ok")
+                    put("task_id", targetTask.id)
+                    put("detail", detail)
+                },
+                LiveScheduling.SILENT,
+            )
+        }
+        if (deepThinkRunner.hasActiveThinking) {
+            return ExecutedToolStep(
+                deepThinkRunner.steerOrCancel(thinkIdRaw = "", actionRaw = "steer", noteRaw = clean),
+                LiveScheduling.SILENT,
+            )
+        }
+        return ExecutedToolStep(
+            buildJsonObject {
+                put("status", "idle")
+                put("message", "当前没有正在运行的后台任务。")
+            },
+            LiveScheduling.WHEN_IDLE,
+        )
+    }
+
+    private fun isCaptureUserScreenIntent(text: String): Boolean {
+        val clean = text.trim()
+        return listOf("看下我的屏幕", "看看我的屏幕", "看我屏幕", "屏幕上是啥", "屏幕上是什么", "看下我现在这页", "截取主屏").any {
+            it in clean
+        }
+    }
+
+    private fun isExplicitPhysicalMainScreenIntent(text: String): Boolean {
+        val clean = text.trim()
+        return listOf("主屏", "手机主屏幕", "桌面屏幕", "外部屏幕").any { it in clean }
+    }
+
+    private fun buildSidecarFeedbackPrompt(kind: String, payload: JsonObject): String = buildString {
+        appendLine("[系统事件·端侧${kind}已完成]")
+        appendLine("执行回执：${payload.toString().take(1_100)}")
+        append("请根据上述真实执行回执，用自然简洁的口语向机主汇报结果；若涉及确认卡片或亲手支付，提醒机主直接在屏幕上点按，严禁索要口头确认。")
+    }
+
     private fun formatDirectStepActivity(
         step: LiveDirectPhoneController.DirectStepProgress?,
         appLabel: String?,
@@ -1884,6 +2472,7 @@ class PersonalLiveRuntime internal constructor(
                 }
                 "scroll", "swipe" -> tr(R.string.live_step_scrolling)
                 "wait", "assert" -> tr(R.string.live_step_waiting)
+                "smart" -> cleanTarget?.takeIf { it.isNotBlank() } ?: tr(R.string.live_step_acting)
                 else -> tr(R.string.live_step_acting)
             }
             val suffix = if (step.totalSteps > 1) " (${step.stepIndex}/${step.totalSteps})" else ""
@@ -1934,6 +2523,7 @@ class PersonalLiveRuntime internal constructor(
         synchronized(this) {
             currentTurnUserUtterance = null
             currentTurnIntentAssessed = false
+            sidecarHandledUtterance = null
             unansweredUserTurnText = null
             unansweredTurnAtMs = 0L
             unansweredToolSummaries.clear()
@@ -1997,7 +2587,12 @@ class PersonalLiveRuntime internal constructor(
         touchCoordinator.clear()
         webSearchRunner.cancelAll()
         deepThinkRunner.cancelAll()
-        scope.launch { directPhone.release() }
+        sidecarInFlightRefs = null
+        sessionCapabilitiesOverride = null
+        scope.launch {
+            directPhone.release()
+            extendedToolRouter.close()
+        }
         PersonalLiveService.stop(app)
         _uiState.update {
             it.copy(
@@ -2023,5 +2618,15 @@ class PersonalLiveRuntime internal constructor(
         private const val USER_SPEECH_PAUSE_TO_THINKING_MS = 650L
         private const val MAX_PLAYBACK_DRAIN_WAIT_MS = 15_000L
         private const val SUBTITLE_LINGER_MS = 3_500L
+
+        internal fun inferModelCapabilities(modelId: String): LiveProviderCapabilities {
+            val lower = modelId.trim().lowercase()
+            return when {
+                "doubao" in lower || "volc" in lower -> LiveProviderCapabilities.VOLC_SIDECAR_ONLY
+                "qwen" in lower && "omni" in lower -> LiveProviderCapabilities.QWEN_OMNI_LITE
+                "gpt-4o" in lower || "gpt-realtime" in lower || "openai" in lower -> LiveProviderCapabilities.OPENAI_REALTIME
+                else -> GeminiLiveProtocol.GEMINI_CAPABILITIES
+            }
+        }
     }
 }

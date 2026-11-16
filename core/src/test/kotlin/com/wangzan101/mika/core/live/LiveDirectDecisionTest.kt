@@ -187,5 +187,107 @@ class LiveDirectDecisionTest {
                 commands = launchCommands,
             ),
         )
+
+        var jevCalls = 0
+        val countingJev = DecisionModel { _, _, _, _ ->
+            jevCalls++
+            DecisionChoice("DISCUSS", probability = 0.99)
+        }
+        // Unmistakable imperative phone commands must pass in 0ms with ZERO cloud Jev calls
+        for (cmdText in listOf(
+            "打开淘宝",
+            "搜索银河乒乓球桌",
+            "点击屏幕中间的自行车",
+            "返回淘宝的首页",
+            "加入购物车",
+            "往下滑一下",
+            "帮我打开微信看下消息",
+        )) {
+            assertFalse(
+                "Imperative '$cmdText' must fast-pass locally",
+                LiveDirectDecision.shouldBlockAsDiscussion(
+                    decision = countingJev,
+                    currentTurnUserText = cmdText,
+                    commands = launchCommands,
+                ),
+            )
+        }
+        assertEquals("Explicit imperatives must invoke cloud IntentGate 0 times", 0, jevCalls)
+
+        // Question / negation / past-narrative utterances MUST still consult IntentGate
+        assertTrue(
+            LiveDirectDecision.shouldBlockAsDiscussion(
+                decision = countingJev,
+                currentTurnUserText = "我昨天打开淘宝买了个杯子",
+                commands = launchCommands,
+            ),
+        )
+        assertTrue(
+            LiveDirectDecision.shouldBlockAsDiscussion(
+                decision = countingJev,
+                currentTurnUserText = "先不要打开微信",
+                commands = launchCommands,
+            ),
+        )
+        assertEquals(2, jevCalls)
+    }
+
+    @Test
+    fun mergeListElementsSupplementsUpTo200CandidatesAndExtendedToolRouterHonorsJevAndFallback() = runTest {
+        assertEquals(200, LiveDirectDecision.MAX_JEV_CANDIDATES)
+        val primary = LiveDirectDecision.extractScreenCandidates(
+            matches = listOf(
+                node(ref = "@e1", name = "顶部按钮", clickable = true, actionRef = "@e1", bounds = listOf(10, 20, 200, 80)),
+            ),
+            editable = false,
+        )
+        val listElements = (2..150).map { idx ->
+            buildJsonObject {
+                put("ref", "@e$idx")
+                put("role", "android.widget.Button")
+                put("name", "条目_$idx")
+                put("bounds", JsonArray(listOf(10, idx * 10, 200, idx * 10 + 8).map(::JsonPrimitive)))
+            }
+        }
+        val merged = LiveDirectDecision.mergeListElementsIntoCandidates(primary, listElements, editable = false)
+        assertEquals(150, merged.size)
+        assertEquals("@e150", merged.last().ref)
+
+        val candidates = listOf(
+            LiveDirectDecision.ExtendedToolCandidate("schedule_create", "Create a recurring or one-shot reminder/schedule"),
+            LiveDirectDecision.ExtendedToolCandidate("schedule_list", "List active schedules and reminders"),
+            LiveDirectDecision.ExtendedToolCandidate("phone_add_calendar_event", "Add an event to system calendar"),
+            LiveDirectDecision.ExtendedToolCandidate("call_dial", "Place a carrier phone call"),
+            LiveDirectDecision.ExtendedToolCandidate("memory_search", "Search long-term personal memory"),
+        )
+
+        val confidentJev = DecisionModel { _, _, options, _ ->
+            val scheduleKey = options.entries.first { it.value.startsWith("schedule_create:") }.key
+            DecisionChoice(choice = scheduleKey, probability = 0.92, applicable = 0.90)
+        }
+        val selectedByJev = LiveDirectDecision.chooseExtendedToolsWithJev(
+            decision = confidentJev,
+            intent = "每天早上8点提醒我吃维生素",
+            details = "08:00 每天重复",
+            userUtterance = "帮我设个每天早上八点吃维生素的提醒",
+            catalog = candidates,
+        )
+        assertEquals("schedule_create", selectedByJev.first())
+        assertTrue(selectedByJev.size in 1..3)
+        assertTrue("Same-family companion tool should be included", "schedule_list" in selectedByJev)
+
+        // Low applicability (< 0.85) or null Jev falls back to deterministic lexical ranking
+        val lowAppJev = DecisionModel { _, _, options, _ ->
+            DecisionChoice(choice = options.keys.first(), probability = 0.95, applicable = 0.50)
+        }
+        val fallbackSelected = LiveDirectDecision.chooseExtendedToolsWithJev(
+            decision = lowAppJev,
+            intent = "把明天下午三点项目评审加到系统日历",
+            details = "15:00-16:00",
+            userUtterance = "把明天下午三点项目评审写进日历",
+            catalog = candidates,
+        )
+        assertTrue(fallbackSelected.isNotEmpty())
+        assertEquals("phone_add_calendar_event", fallbackSelected.first())
     }
 }

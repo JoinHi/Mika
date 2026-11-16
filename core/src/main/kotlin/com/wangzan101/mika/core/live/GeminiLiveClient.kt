@@ -31,30 +31,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 
-interface LiveRealtimeSession : AutoCloseable {
-    val events: Flow<GeminiLiveEvent>
-    fun sendAudioPcm16(pcm16Le: ByteArray, byteCount: Int = pcm16Le.size): Boolean
-    fun sendAudioStreamEnd(): Boolean
-    fun sendVideoJpeg(jpeg: ByteArray): Boolean
-    fun sendUserText(text: String, turnComplete: Boolean = true): Boolean
-    fun sendContextUpdate(text: String, triggerResponse: Boolean = false): Boolean
-    fun sendToolResponse(
-        id: String,
-        name: String,
-        output: JsonObject,
-        scheduling: LiveScheduling? = null,
-    ): Boolean
-    fun sendToolResponses(responses: List<LiveFunctionResponse>): Boolean {
-        if (responses.isEmpty()) return false
-        var ok = true
-        for (r in responses) {
-            if (!sendToolResponse(r.id, r.name, r.output, r.scheduling)) ok = false
-        }
-        return ok
-    }
-    override fun close()
-}
-
 class GeminiLiveClient(
     http: OkHttpClient = defaultHttpClient(),
     private val connectTimeoutMs: Long = 15_000L,
@@ -108,10 +84,10 @@ class GeminiLiveClient(
             private fun acceptPayload(raw: String) {
                 val parsed = GeminiLiveProtocol.parseServerFrame(raw)
                 for (event in parsed) {
-                    if (event is GeminiLiveEvent.SetupComplete && !ready.isCompleted) {
+                    if (event is LiveSessionEvent.SetupComplete && !ready.isCompleted) {
                         ready.complete(Unit)
                     }
-                    if (event is GeminiLiveEvent.AudioDelta) {
+                    if (event is LiveSessionEvent.AudioDelta) {
                         if (queuedAudioChunks.incrementAndGet() > MAX_QUEUED_AUDIO_CHUNKS) {
                             queuedAudioChunks.decrementAndGet()
                             continue
@@ -154,7 +130,7 @@ class GeminiLiveClient(
                     if (!ready.isCompleted) {
                         ready.completeExceptionally(IOException("Gemini Live 会话关闭 ($code): $reason", error))
                     }
-                    channel.trySend(GeminiLiveEvent.Closed(code, reason, error))
+                    channel.trySend(LiveSessionEvent.Closed(code, reason, error))
                     channel.close()
                 }
             }
@@ -169,8 +145,10 @@ class GeminiLiveClient(
         }
 
         return object : LiveRealtimeSession {
-            override val events: Flow<GeminiLiveEvent> = channel.receiveAsFlow().onEach { ev ->
-                if (ev is GeminiLiveEvent.AudioDelta) {
+            override val capabilities: LiveProviderCapabilities = GeminiLiveProtocol.GEMINI_CAPABILITIES
+
+            override val events: Flow<LiveSessionEvent> = channel.receiveAsFlow().onEach { ev ->
+                if (ev is LiveSessionEvent.AudioDelta) {
                     queuedAudioChunks.updateAndGet { if (it > 0) it - 1 else 0 }
                 }
             }

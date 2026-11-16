@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
  */
 sealed interface LiveAsyncEvent {
     val attachedJpeg: ByteArray? get() = null
+    val triggerResponse: Boolean get() = true
     fun buildPrompt(): String
 
     data class UserTouchGuidance(
@@ -21,17 +22,89 @@ sealed interface LiveAsyncEvent {
         val screenSummary: String,
         val jpegFrame: ByteArray?,
         val touchCount: Int,
+        val speakAloud: Boolean = false,
     ) : LiveAsyncEvent {
         override val attachedJpeg: ByteArray? get() = jpegFrame
+        override val triggerResponse: Boolean get() = speakAloud
         override fun buildPrompt(): String = buildString {
-            appendLine("[系统事件·机主刚刚在虚拟大屏手动操作了 App（引导指令）]")
+            if (speakAloud) {
+                appendLine("[系统事件·机主刚刚在虚拟大屏手动操作了 App（引导指令）]")
+            } else {
+                appendLine("[系统事件·机主刚刚在虚拟大屏手动操作了 App（静默界面同步）]")
+            }
             if (!appLabel.isNullOrBlank()) appendLine("当前前台应用：$appLabel")
             appendLine("连续触控次数：$touchCount")
             if (screenSummary.isNotBlank()) {
                 appendLine("操作稳定后的新界面摘要：")
                 appendLine(screenSummary.take(1_600))
             }
-            append("机主的操作相当于插入了一条界面引导指令。请结合最新画面与界面摘要，用简短自然的口语播报当前进入了什么页面或发生了什么变化，并顺承机主意图询问下一步或直接配合。")
+            if (speakAloud) {
+                append("机主的操作相当于插入了一条界面引导指令。请结合最新画面与界面摘要，用简短自然的口语播报当前进入了什么页面或发生了什么变化，并顺承机主意图询问下一步或直接配合。")
+            } else {
+                append("仅供静默刷新你对当前虚拟屏界面的上下文感知，此刻不要主动开口插话；等机主开口提问或下达下一步指令时再结合最新界面自然配合。")
+            }
+        }
+    }
+
+    data class StageGoalFinished(
+        val goalId: String,
+        val goal: String,
+        val ok: Boolean,
+        val stopReason: String? = null,
+        val summary: String,
+        val screenOverview: String = "",
+        val jpegFrame: ByteArray? = null,
+    ) : LiveAsyncEvent {
+        override val attachedJpeg: ByteArray? get() = jpegFrame
+        override fun buildPrompt(): String = buildString {
+            when (stopReason) {
+                "awaiting_ui_confirmation" -> {
+                    appendLine("[系统事件·实时虚拟屏操作等待机主界面确认] goal_id=$goalId")
+                    appendLine("原目标：${goal.take(240)}")
+                    appendLine("确认说明：${summary.take(700)}")
+                    if (screenOverview.isNotBlank()) {
+                        appendLine("当前界面摘要：${screenOverview.take(800)}")
+                    }
+                    append("请简短说清待确认的操作对象与内容，提醒机主直接在屏幕确认卡片上点击「同意 / 不同意」；严禁索要口头确认，也严禁重复调用工具重试这一步。")
+                }
+                "payment_requires_user_touch", "user_touch_required", "protected_content" -> {
+                    appendLine("[系统事件·实时虚拟屏操作需要机主亲手点按] goal_id=$goalId")
+                    appendLine("原目标：${goal.take(240)}")
+                    appendLine("原因说明：${summary.take(700)}")
+                    append("支付、验密或受保护界面不支持自动代点，请简短提醒机主直接在实时虚拟屏画面上亲手点按完成。")
+                }
+                else -> {
+                    if (ok) {
+                        appendLine("[系统事件·实时虚拟屏多步操作已完成] goal_id=$goalId")
+                    } else {
+                        appendLine("[系统事件·实时虚拟屏多步操作阶段性停下] goal_id=$goalId，状态=${stopReason ?: "stopped"}")
+                    }
+                    appendLine("原目标：${goal.take(240)}")
+                    if (summary.isNotBlank()) {
+                        appendLine("执行结论：${summary.take(900)}")
+                    }
+                    if (screenOverview.isNotBlank()) {
+                        appendLine("当前界面摘要：${screenOverview.take(900)}")
+                    }
+                    if (ok) {
+                        append("请用简洁自然的口语向机主汇报上述真实完成结果。")
+                    } else {
+                        append("请结合真实执行情况与当前虚拟屏画面，简短自然地告知机主当前停在什么位置或询问下一步（切勿编造未完成的动作）。")
+                    }
+                }
+            }
+        }
+    }
+
+    data class AsyncExtendedToolResult(
+        val intent: String,
+        val resultSummary: String,
+    ) : LiveAsyncEvent {
+        override fun buildPrompt(): String = buildString {
+            appendLine("[系统事件·后台扩展工具已执行完成]")
+            appendLine("请求目标：${intent.take(240)}")
+            appendLine("执行回执：${resultSummary.take(1_400)}")
+            append("请根据上述真实执行回执，用简洁自然的口语向机主汇报结果；若涉及屏幕确认卡片，请提醒机主直接在界面点击，严禁索要口头确认。")
         }
     }
 
@@ -273,6 +346,11 @@ class LiveTurnCoordinator(
                 while (it.hasNext()) {
                     if (it.next() is LiveAsyncEvent.UserTouchGuidance) it.remove()
                 }
+            } else if (event is LiveAsyncEvent.StageGoalFinished) {
+                val it = queue.iterator()
+                while (it.hasNext()) {
+                    if (it.next() is LiveAsyncEvent.StageGoalFinished) it.remove()
+                }
             } else if (event is LiveAsyncEvent.BackgroundTaskWaiting) {
                 val it = queue.iterator()
                 while (it.hasNext()) {
@@ -287,6 +365,21 @@ class LiveTurnCoordinator(
             }
             queue.addLast(event)
             ensurePumpLocked()
+        }
+    }
+
+    /**
+     * 当机主下达新的手机屏幕指令抢占虚拟屏轨道时，立即清空尚未投递的旧虚拟屏阶段结果与手动触控缓存，防止过期状态播报。
+     */
+    fun cancelPendingStageEvents() {
+        synchronized(lock) {
+            val it = queue.iterator()
+            while (it.hasNext()) {
+                val item = it.next()
+                if (item is LiveAsyncEvent.StageGoalFinished || item is LiveAsyncEvent.UserTouchGuidance) {
+                    it.remove()
+                }
+            }
         }
     }
 
@@ -354,17 +447,22 @@ class LiveTurnCoordinator(
     }
 
     private fun deliverBatch(session: LiveRealtimeSession, batch: List<LiveAsyncEvent>) {
-        val latestJpeg = batch.asReversed().firstNotNullOfOrNull { it.attachedJpeg }
-        if (latestJpeg != null) {
-            session.sendVideoJpeg(latestJpeg)
+        val shouldTrigger = batch.any { it.triggerResponse }
+        if (shouldTrigger && session.capabilities.supportsVisualFrames) {
+            val latestJpeg = batch.asReversed().firstNotNullOfOrNull { it.attachedJpeg }
+            if (latestJpeg != null) {
+                session.sendVideoJpeg(latestJpeg)
+            }
         }
         val mergedPrompt = if (batch.size == 1) {
             batch[0].buildPrompt()
         } else {
             batch.joinToString("\n\n---\n\n") { it.buildPrompt() }
         }
-        if (session.sendContextUpdate(mergedPrompt, triggerResponse = true)) {
-            lastAssistantAudioAtMs = clockMs()
+        if (session.sendContextUpdate(mergedPrompt, triggerResponse = shouldTrigger)) {
+            if (shouldTrigger) {
+                lastAssistantAudioAtMs = clockMs()
+            }
             onDelivered()
         }
     }

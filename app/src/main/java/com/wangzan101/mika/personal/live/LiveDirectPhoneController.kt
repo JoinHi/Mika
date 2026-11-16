@@ -30,6 +30,7 @@ import com.wangzan101.mika.core.action.ActionRecorder
 import com.wangzan101.mika.core.action.ApprovalSettings
 import com.wangzan101.mika.core.action.Origin
 import com.wangzan101.mika.core.action.OutwardPacing
+import com.wangzan101.mika.core.assembly.legacyNames
 import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.cap.phone.AppPacing
 import com.wangzan101.mika.core.cap.phone.OperatingPace
@@ -39,12 +40,21 @@ import com.wangzan101.mika.core.gate.ConfirmationRequest
 import com.wangzan101.mika.core.gate.Irreversible
 import com.wangzan101.mika.core.guard.OperationGuards
 import com.wangzan101.mika.core.decision.DecisionModel
+import com.wangzan101.mika.core.knowledge.GuideCatalog
 import com.wangzan101.mika.core.knowledge.KnowledgeStore
 import com.wangzan101.mika.core.live.LiveDirectConfirmation
 import com.wangzan101.mika.core.live.LiveDirectDecision
+import com.wangzan101.mika.core.model.ModelRole
+import com.wangzan101.mika.core.model.ModelSession
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.personal.PersonalAgent
+import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.record.RunSink
+import com.wangzan101.mika.core.replay.ReplayOutcome
+import com.wangzan101.mika.core.replay.Replayer
+import com.wangzan101.mika.core.replay.RouteChoice
+import com.wangzan101.mika.core.replay.RouteMatcher
+import com.wangzan101.mika.core.replay.RouteStore
 import com.wangzan101.mika.core.resource.ResourceScope
 import com.wangzan101.mika.core.risk.IrrevAction
 import com.wangzan101.mika.core.run.Attendance
@@ -54,13 +64,18 @@ import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.run.RunSpec
 import com.wangzan101.mika.core.shell.AccessibilityRepair
 import com.wangzan101.mika.core.shell.HelperRestart
+import com.wangzan101.mika.core.tool.LinkPolicy
 import com.wangzan101.mika.core.tool.PACKAGE_NAME_RE
 import com.wangzan101.mika.core.tool.ToolDispatcher
 import com.wangzan101.mika.core.uistate.AfterTaskMarks
 import com.wangzan101.mika.core.uistate.AppAccessScreenPort
 import com.wangzan101.mika.core.uistate.PlacePace
+import com.wangzan101.mika.core.vision.VisionService
+import com.wangzan101.mika.memory.MemoryRuntime
+import com.wangzan101.mika.replay.FileRouteStore
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.Prerequisites
+import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.settings.RunApproval
 import com.wangzan101.mika.task.AppMuter
 import com.wangzan101.mika.task.AppsAfterTaskEnd
@@ -71,11 +86,13 @@ import com.wangzan101.mika.ui.StatusCopy
 import com.wangzan101.mika.ui.scaleTouchToDisplay
 import com.wangzan101.mika.vision.BitmapImageOps
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -158,12 +175,24 @@ class LiveDirectPhoneController internal constructor(
         val totalSteps: Int,
     )
 
-    private class DirectGateStopException(
+    sealed interface DirectStageLaunch {
+        data class Started(val goalId: String) : DirectStageLaunch
+        data class Rejected(val result: DirectActResult) : DirectStageLaunch
+    }
+
+    data class DirectStageObservation(
+        val appLabel: String,
+        val screenText: String,
+        val blocked: Boolean,
+        val jpegFrame: ByteArray?,
+    )
+
+    internal class DirectGateStopException(
         val reason: String,
         val userMessage: String,
     ) : Exception(userMessage)
 
-    private class WarmSession(
+    internal class WarmSession(
         val key: String,
         val sideScope: CoroutineScope,
         val resources: ResourceScope,
@@ -178,6 +207,13 @@ class LiveDirectPhoneController internal constructor(
         val accessGuard: AppAccessScreenPort,
         val privateScreen: SmsPrivateScreen,
         val dispatcher: ToolDispatcher,
+        val knowledge: KnowledgeStore,
+        val catalog: GuideCatalog,
+        val visionService: VisionService?,
+        val routeStore: RouteStore,
+        val turnSink: RunSink,
+        private val turnEventsBuffer: MutableList<RunEvent>,
+        private val turnEventsLock: Any,
         val approval: RunApproval,
         val confirmations: ConfirmationGate,
         val pacing: OutwardPacing,
@@ -188,6 +224,9 @@ class LiveDirectPhoneController internal constructor(
         val passGate: suspend () -> Unit,
         val selfPackage: String,
     ) {
+        private val unlockedPackages = HashSet<String>()
+        private val deliveredGuidePackages = HashSet<String>()
+
         @Volatile
         var guards: OperationGuards = OperationGuards()
             private set
@@ -200,6 +239,65 @@ class LiveDirectPhoneController internal constructor(
             val nextGuards = OperationGuards()
             guards = nextGuards
             executor = buildExecutor(nextGuards)
+            clearTurnEvents()
+        }
+
+        fun clearTurnEvents() {
+            synchronized(turnEventsLock) {
+                turnEventsBuffer.clear()
+            }
+        }
+
+        fun snapshotTurnEventsWithEnd(endEvent: RunEvent.TaskEnded): List<RunEvent> = synchronized(turnEventsLock) {
+            ArrayList<RunEvent>(turnEventsBuffer.size + 1).apply {
+                addAll(turnEventsBuffer)
+                add(endEvent)
+            }
+        }
+
+        fun currentForegroundPackage(): String? = screen.target.value?.packageName
+
+        @Synchronized
+        fun unlockPackageLinks(pkg: String) {
+            if (pkg.isBlank() || !unlockedPackages.add(pkg)) return
+            knowledge.byPackage(pkg)?.let { entry ->
+                if (entry.links.isNotEmpty()) {
+                    dispatcher.allowLinks(entry.links)
+                }
+            }
+        }
+
+        @Synchronized
+        fun unlockLinksForUri(uri: String?, explicitPkg: String?, installed: List<Pair<String, String>>): String? {
+            if (!explicitPkg.isNullOrBlank()) {
+                unlockPackageLinks(explicitPkg)
+                return explicitPkg
+            }
+            val cleanUri = uri?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            for ((pkg, _) in installed) {
+                val entry = knowledge.byPackage(pkg) ?: continue
+                val matched = entry.links.firstOrNull { it.uri == cleanUri }
+                if (matched != null) {
+                    unlockPackageLinks(pkg)
+                    return matched.packageName ?: pkg
+                }
+            }
+            return null
+        }
+
+        @Synchronized
+        fun consumeCompactAppGuideOnce(pkg: String?): String? {
+            val clean = pkg?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            if (!deliveredGuidePackages.add(clean)) return null
+            val entry = knowledge.byPackage(clean) ?: return null
+            val linksLine = entry.links.take(4)
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(", ") { "${it.name}=${it.uri}" }
+                ?.let { "[直达深链(open_link): $it]" }
+            val bodyLine = entry.body?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                compactGuideSnippet(it, MAX_INLINE_APP_GUIDE_CHARS)
+            }
+            return listOfNotNull(linksLine, bodyLine).joinToString(" | ").takeIf { it.isNotEmpty() }
         }
 
         private fun buildExecutor(currentGuards: OperationGuards): ActionExecutor = ActionExecutor(
@@ -222,6 +320,7 @@ class LiveDirectPhoneController internal constructor(
     private val activeActLock = Any()
     private var activeActJob: Job? = null
     private val stepSeq = AtomicInteger(0)
+    private val stageGoalSeq = AtomicInteger(0)
     private val confirmSeq = AtomicInteger(0)
     @Volatile
     private var session: WarmSession? = null
@@ -283,7 +382,11 @@ class LiveDirectPhoneController internal constructor(
         pendingTurnGuardReset = true
     }
 
-    /** 立即中断任何正在排队或逐步执行中的 `act` 调用（供新屏幕指令抢占时调用）。 */
+    /** 是否存在正在执行的同步直控批次或非阻塞虚拟屏多步目标（供空闲挂断守卫使用）。 */
+    val hasActiveWork: Boolean
+        get() = _activating.value || synchronized(activeActLock) { activeActJob?.isActive == true }
+
+    /** 立即中断任何正在排队或逐步执行中的 `act` / `startAsyncGoal` 调用（供新屏幕指令抢占时调用）。 */
     fun cancelInFlightAct() {
         val runningJob = synchronized(activeActLock) {
             val prev = activeActJob
@@ -291,6 +394,57 @@ class LiveDirectPhoneController internal constructor(
             prev
         }
         runningJob?.cancel()
+    }
+
+    /**
+     * 在非阻塞虚拟屏代理轨道上启动多步目标（`< 20ms` 立即返回启动凭据）：
+     * - 原子抢占上一条仍在执行的屏幕动作，后台在同一热会话运行 `RouteMatcher + Replayer -> LiveSmartPhoneRunner`；
+     * - 若执行期间机主说出新屏幕指令被抢占取消，协程抛 `CancellationException` 静默退出，绝不触发过期 [onFinished] 播报。
+     */
+    fun startAsyncGoal(
+        goal: String,
+        appName: String? = null,
+        callTag: String = "smart_async",
+        onFinished: (goalId: String, result: DirectActResult) -> Unit,
+    ): DirectStageLaunch {
+        val startedMs = SystemClock.elapsedRealtime()
+        val cleanGoal = goal.trim()
+        if (cleanGoal.isEmpty()) {
+            return DirectStageLaunch.Rejected(failEarly(startedMs, 0, "missing_goal", "goal 不能为空。"))
+        }
+        if (app.teachReady && app.teach.blocksTasks()) {
+            return DirectStageLaunch.Rejected(
+                statusEarly(startedMs, 0, "teach_active", "当前正在进行人工示范录制，无法同时执行直控操作。"),
+            )
+        }
+        if (app.taskState.runs.value.isNotEmpty()) {
+            return DirectStageLaunch.Rejected(
+                statusEarly(startedMs, 0, "task_running", "当前已有后台任务正在占用手机屏幕。"),
+            )
+        }
+        val goalId = "stage_${stageGoalSeq.incrementAndGet()}"
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val res = actGoal(goal = cleanGoal, appName = appName, callTag = "${callTag}_$goalId")
+            currentCoroutineContext().ensureActive()
+            onFinished(goalId, res)
+        }
+        val previous = synchronized(activeActLock) {
+            val prev = activeActJob
+            activeActJob = job
+            prev
+        }
+        if (previous != null && previous !== job) {
+            previous.cancel()
+        }
+        job.invokeOnCompletion {
+            synchronized(activeActLock) {
+                if (activeActJob === job) {
+                    activeActJob = null
+                }
+            }
+        }
+        job.start()
+        return DirectStageLaunch.Started(goalId)
     }
 
     suspend fun act(commands: JsonArray, callTag: String = "direct"): DirectActResult {
@@ -380,6 +534,171 @@ class LiveDirectPhoneController internal constructor(
             synchronized(activeActLock) {
                 if (activeActJob === myJob) {
                     activeActJob = null
+                }
+            }
+        }
+    }
+
+    /**
+     * 在常驻实时虚拟屏上执行中等复杂的单应用多步界面目标（`smart_phone_goal`）：
+     * 先走 `RouteMatcher + Replayer` 经验路线零推理快放；若无匹配或中途分叉，无缝交给 [LiveSmartPhoneRunner] 在同一热会话内收尾。
+     */
+    suspend fun actGoal(goal: String, appName: String? = null, callTag: String = "goal"): DirectActResult {
+        val startedMs = SystemClock.elapsedRealtime()
+        val cleanGoal = goal.trim()
+        if (cleanGoal.isEmpty()) {
+            return failEarly(startedMs, 0, "missing_goal", "goal 不能为空。")
+        }
+        if (app.teachReady && app.teach.blocksTasks()) {
+            return statusEarly(startedMs, 0, "teach_active", "当前正在进行人工示范录制，无法同时执行直控操作。")
+        }
+        if (app.taskState.runs.value.isNotEmpty()) {
+            return statusEarly(startedMs, 0, "task_running", "当前已有后台任务正在占用手机屏幕。")
+        }
+
+        val myJob = currentCoroutineContext()[Job]
+        val previousJob = synchronized(activeActLock) {
+            val prev = activeActJob
+            activeActJob = myJob
+            prev
+        }
+        if (previousJob != null && previousJob !== myJob) {
+            previousJob.cancel()
+        }
+
+        return try {
+            mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                val taskBusy = app.taskState.runs.value.isNotEmpty()
+                yieldRequested = taskBusy
+                if (taskBusy) {
+                    closeSessionLocked()
+                    return@withLock statusEarly(startedMs, 0, "task_running", "当前已有后台任务启动，直控已让出手机屏幕。")
+                }
+                if (app.teachReady && app.teach.blocksTasks()) {
+                    closeSessionLocked()
+                    return@withLock statusEarly(startedMs, 0, "teach_active", "当前正在进行人工示范录制，无法同时执行直控操作。")
+                }
+                idleJob?.cancel()
+                if (_pendingConfirmation.value != null) {
+                    _pendingConfirmation.value = null
+                }
+                _actionSeq.value = _actionSeq.value + 1L
+                _activating.value = true
+                try {
+                    executeGoalLocked(cleanGoal, appName, startedMs, callTag)
+                } finally {
+                    _stepProgress.value = null
+                    _activating.value = false
+                    val nowTaskBusy = app.taskState.runs.value.isNotEmpty()
+                    yieldRequested = nowTaskBusy
+                    if (nowTaskBusy || (app.teachReady && app.teach.blocksTasks())) {
+                        closeSessionLocked()
+                    } else {
+                        scheduleIdleRelease()
+                    }
+                }
+            }
+        } finally {
+            synchronized(activeActLock) {
+                if (activeActJob === myJob) {
+                    activeActJob = null
+                }
+            }
+        }
+    }
+
+    /**
+     * 执行单个底层手机或系统动作工具（如 `phone_set_alarm`、`phone_set_timer`、`phone_show_alarms`、`phone_add_calendar_event`、`phone_calendar_bulk_insert`、`phone_open_link`）：
+     * 复用同一虚拟屏与权限/确认网关；对静默系统工具（如设闹钟、计时器、批量写日历）默认不主动弹开虚拟屏画面，仅当系统应用实际弹出可视页面时才同步画面。
+     */
+    suspend fun executePhoneTool(
+        toolName: String,
+        args: JsonObject,
+        callTag: String = "ext_phone",
+        revealStageOnlyIfShowing: Boolean = false,
+    ): DirectActResult {
+        val startedMs = SystemClock.elapsedRealtime()
+        if (app.teachReady && app.teach.blocksTasks()) {
+            return statusEarly(startedMs, 1, "teach_active", "当前正在进行人工示范录制，无法同时执行操作。")
+        }
+        if (app.taskState.runs.value.isNotEmpty()) {
+            return statusEarly(startedMs, 1, "task_running", "当前已有后台任务正在占用手机屏幕。")
+        }
+        return mutex.withLock {
+            currentCoroutineContext().ensureActive()
+            val warm = try {
+                ensureSessionLocked()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PhoneUnavailable) {
+                return@withLock failEarly(startedMs, 1, "phone_unavailable", e.message ?: "手机操控助手当前未就绪。")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to open session for $toolName", e)
+                return@withLock failEarly(startedMs, 1, "phone_session_failed", e.message ?: "无法建立手机会话。")
+            }
+            if (pendingTurnGuardReset) {
+                pendingTurnGuardReset = false
+                warm.resetTurnGuards()
+            }
+            args.string("package")?.let { warm.unlockPackageLinks(it) }
+            idleJob?.cancel()
+            try {
+                val outcome = try {
+                    warm.executor.run(
+                        Part.ToolCall("live_${callTag}_$toolName", toolName, args.toString()),
+                        Origin.Batch(stepSeq.incrementAndGet()),
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: DirectGateStopException) {
+                    return@withLock statusEarly(startedMs, 1, e.reason, e.userMessage)
+                } catch (e: Exception) {
+                    Log.w(TAG, "executePhoneTool failed: $toolName", e)
+                    closeSessionLocked()
+                    return@withLock failEarly(startedMs, 1, "execution_error", e.message ?: "执行手机工具异常。")
+                }
+                val elapsed = SystemClock.elapsedRealtime() - startedMs
+                when (outcome) {
+                    is ActionOutcome.Ran -> {
+                        val content = outcome.exec.content
+                        val ok = content["ok"] == JsonPrimitive(true)
+                        val showing = content["showing"] == JsonPrimitive(true)
+                        if (!revealStageOnlyIfShowing || showing) {
+                            syncDisplayStateLocked(warm)
+                        }
+                        if (ok) recordCompletedStep(callTag, 0, toolName)
+                        DirectActResult(
+                            payload = content,
+                            elapsedMs = elapsed,
+                            completedSteps = if (ok) 1 else 0,
+                            totalSteps = 1,
+                            ok = ok,
+                        )
+                    }
+                    is ActionOutcome.Refused -> {
+                        val (reason, msg) = handleRefusedStep(warm, outcome, toolName, args)
+                        syncDisplayStateLocked(warm)
+                        DirectActResult(
+                            payload = buildJsonObject {
+                                put("ok", false)
+                                put("stop_reason", reason)
+                                msg?.let { put("message", it) }
+                                put("elapsed_ms", elapsed)
+                            },
+                            elapsedMs = elapsed,
+                            completedSteps = 0,
+                            totalSteps = 1,
+                            ok = false,
+                        )
+                    }
+                    is ActionOutcome.Cancelled -> failEarly(startedMs, 1, "cancelled", "操作已取消。")
+                }
+            } finally {
+                if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
+                    closeSessionLocked()
+                } else {
+                    scheduleIdleRelease()
                 }
             }
         }
@@ -610,6 +929,49 @@ class LiveDirectPhoneController internal constructor(
                 clean["op"] = JsonPrimitive("launch")
                 clean["packageName"] = JsonPrimitive(resolvedPkg)
                 normalized += JsonObject(clean)
+            } else if (op == "open_link") {
+                val rawApp = cmd.string("packageName") ?: cmd.string("appName")
+                val resolvedPkg = if (rawApp != null) {
+                    resolveAppPackage(rawApp, installed) ?: run {
+                        val suggestions = suggestApps(rawApp, installed)
+                        val elapsed = SystemClock.elapsedRealtime() - startedMs
+                        return DirectActResult(
+                            payload = buildJsonObject {
+                                put("ok", false)
+                                put("error", "app_not_installed")
+                                put("requested", rawApp)
+                                put("message", "未找到已安装应用「$rawApp」。")
+                                if (suggestions.isNotEmpty()) {
+                                    put("candidates", JsonArray(suggestions.map { (pkg, label) ->
+                                        buildJsonObject { put("appName", label); put("packageName", pkg) }
+                                    }))
+                                }
+                                put("elapsed_ms", elapsed)
+                            },
+                            elapsedMs = elapsed,
+                            completedSteps = 0,
+                            totalSteps = rawCommands.size,
+                            ok = false,
+                        )
+                    }
+                } else {
+                    null
+                }
+                val clean = LinkedHashMap<String, JsonElement>()
+                for ((k, v) in cmd) {
+                    if (k != "appName" && k != "packageName") clean[k] = v
+                }
+                clean["op"] = JsonPrimitive("open_link")
+                val settingsAction = cmd.string("settingsAction") ?: cmd.string("action")
+                if (settingsAction != null) {
+                    clean["settingsAction"] = JsonPrimitive(settingsAction)
+                    if (settingsAction == LinkPolicy.APP_DETAILS && cmd.string("uri") == null && resolvedPkg != null) {
+                        clean["uri"] = JsonPrimitive("package:$resolvedPkg")
+                    }
+                } else if (resolvedPkg != null) {
+                    clean["packageName"] = JsonPrimitive(resolvedPkg)
+                }
+                normalized += JsonObject(clean)
             } else {
                 val clean = LinkedHashMap<String, JsonElement>()
                 for ((k, v) in cmd) {
@@ -639,6 +1001,7 @@ class LiveDirectPhoneController internal constructor(
             pendingTurnGuardReset = false
             warm.resetTurnGuards()
         }
+
         val executor = warm.executor
         val steps = mutableListOf<JsonObject>()
         var stopReason: String? = null
@@ -649,16 +1012,40 @@ class LiveDirectPhoneController internal constructor(
         for ((index, command) in normalized.withIndex()) {
             currentCoroutineContext().ensureActive()
             val op = command.string("op")!!
-            val targetLabel = command.string("appName")
-                ?: command.string("targetText")
-                ?: command.string("text")
+            val effectiveCommand = if (op == "open_link" && command.string("settingsAction") == null) {
+                val matchedPkg = warm.unlockLinksForUri(
+                    uri = command.string("uri"),
+                    explicitPkg = command.string("packageName"),
+                    installed = installed,
+                )
+                if (matchedPkg != null && command.string("packageName") == null) {
+                    val uriVal = command.string("uri").orEmpty()
+                    if (uriVal.startsWith("http://", ignoreCase = true) || uriVal.startsWith("https://", ignoreCase = true)) {
+                        JsonObject(command + ("packageName" to JsonPrimitive(matchedPkg)))
+                    } else {
+                        command
+                    }
+                } else {
+                    command
+                }
+            } else {
+                if (op == "launch") {
+                    command.string("packageName")?.let { warm.unlockPackageLinks(it) }
+                }
+                command
+            }
+            val targetLabel = effectiveCommand.string("appName")
+                ?: effectiveCommand.string("targetText")
+                ?: effectiveCommand.string("text")
+                ?: effectiveCommand.string("uri")
+                ?: effectiveCommand.string("settingsAction")
             _stepProgress.value = DirectStepProgress(
                 op = op,
                 target = targetLabel?.takeIf { it.isNotBlank() },
                 stepIndex = index + 1,
                 totalSteps = normalized.size,
             )
-            val whenText = command.string("whenText")
+            val whenText = effectiveCommand.string("whenText")
             if (whenText != null) {
                 val matched = hasTextOnScreen(executor, callTag, index, whenText)
                 if (!matched) {
@@ -669,14 +1056,14 @@ class LiveDirectPhoneController internal constructor(
             }
 
             if (op == "wait" || op == "assert") {
-                val targetText = command.string("targetText")
+                val targetText = effectiveCommand.string("targetText")
                 if (targetText == null) {
                     stopReason = "target_required"
                     steps += stepRow(index, op, ok = false, error = stopReason, executed = false)
                     break
                 }
-                val present = command.boolean("present") ?: true
-                val timeoutMs = (if (op == "assert") 0 else (command.integer("timeoutMs") ?: 5_000)).coerceIn(0, 10_000)
+                val present = effectiveCommand.boolean("present") ?: true
+                val timeoutMs = (if (op == "assert") 0 else (effectiveCommand.integer("timeoutMs") ?: 5_000)).coerceIn(0, 10_000)
                 val satisfied = awaitTextOnScreen(warm, executor, callTag, index, targetText, present, timeoutMs)
                 steps += stepRow(index, op, ok = satisfied, error = if (satisfied) null else "condition_unmet", executed = true)
                 if (satisfied) {
@@ -689,7 +1076,7 @@ class LiveDirectPhoneController internal constructor(
             }
 
             val resolvedCall = try {
-                resolveToolCall(executor, callTag, index, op, command)
+                resolveToolCall(warm, executor, callTag, index, op, effectiveCommand)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: DirectGateStopException) {
@@ -796,11 +1183,18 @@ class LiveDirectPhoneController internal constructor(
         }
 
         syncDisplayStateLocked(warm)
+        _foregroundPackage.value?.let { warm.unlockPackageLinks(it) }
 
         val completedCount = steps.count { it["ok"] == JsonPrimitive(true) }
         val ok = stopReason == null
-        val compact = finalScreen?.let(::compactScreen)
-        val jpeg = if (!skipFinalRead && shouldAttachVisualFrame(stopReason, finalScreen)) {
+        val lastOpWasObserve = normalized.lastOrNull()?.string("op") == "observe"
+        val compact = finalScreen?.let { compactScreen(it, slimSuccess = false) }
+        val appGuide = if (!skipFinalRead) warm.consumeCompactAppGuideOnce(_foregroundPackage.value) else null
+        val forceObserveFrame = lastOpWasObserve && finalScreen?.get("protected") != JsonPrimitive(true)
+        val jpeg = if (
+            !skipFinalRead &&
+            (forceObserveFrame || shouldAttachVisualFrame(stopReason, finalScreen, suppressDenseSuccessFrame = false))
+        ) {
             capturePreviewJpegLocked(warm)
         } else {
             null
@@ -816,6 +1210,7 @@ class LiveDirectPhoneController internal constructor(
             stopMessage?.let { put("message", it) }
             put("steps", JsonArray(steps))
             compact?.let { put("screen", it) }
+            appGuide?.let { put("appGuide", it) }
             if (jpeg != null) put("visual_frame_attached", true)
         }
         return DirectActResult(
@@ -828,6 +1223,293 @@ class LiveDirectPhoneController internal constructor(
         )
     }
 
+    private sealed interface ReplayAttempt {
+        data object NotApplicable : ReplayAttempt
+        data class Finished(val result: DirectActResult) : ReplayAttempt
+        data class DivergedAfterPartialProgress(val handoffNote: String) : ReplayAttempt
+    }
+
+    private suspend fun executeGoalLocked(
+        goal: String,
+        appName: String?,
+        startedMs: Long,
+        callTag: String,
+    ): DirectActResult {
+        val installed = runCatching { launchableApps(app.packageManager, app.packageName) }.getOrDefault(emptyList())
+        val resolvedPkg = appName?.trim()?.takeIf { it.isNotEmpty() }?.let { resolveAppPackage(it, installed) }
+        val warm = try {
+            ensureSessionLocked()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: PhoneUnavailable) {
+            return failEarly(
+                startedMs,
+                0,
+                "phone_unavailable",
+                e.message ?: "手机操控助手当前未就绪，如需网页或通话操作可尝试 delegate_task。",
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to open session for actGoal", e)
+            return failEarly(startedMs, 0, "phone_session_failed", e.message ?: "无法建立直控手机会话。")
+        }
+
+        if (pendingTurnGuardReset) {
+            pendingTurnGuardReset = false
+            warm.resetTurnGuards()
+        } else {
+            warm.clearTurnEvents()
+        }
+        resolvedPkg?.let { warm.unlockPackageLinks(it) }
+
+        var replayHandoffNote: String? = null
+        if (FeatureFlags.get(app).speedFlags().replay) {
+            when (val replay = tryReplayGoalLocked(warm, goal, startedMs, callTag)) {
+                is ReplayAttempt.Finished -> return replay.result
+                is ReplayAttempt.DivergedAfterPartialProgress -> replayHandoffNote = replay.handoffNote
+                ReplayAttempt.NotApplicable -> Unit
+            }
+        }
+
+        return LiveSmartPhoneRunner.runOnWarmSession(
+            app = app,
+            warm = warm,
+            goal = goal,
+            appName = appName,
+            resolvedPackage = resolvedPkg,
+            installedApps = installed,
+            replayHandoffNote = replayHandoffNote,
+            maxSteps = LiveSmartPhoneRunner.DEFAULT_MAX_STEPS,
+            startedMs = startedMs,
+            callTag = callTag,
+            nextStepNum = stepSeq::incrementAndGet,
+            onStepProgress = { op, target, idx, total ->
+                _stepProgress.value = DirectStepProgress(op, target, idx, total)
+            },
+            onRefusedStep = { refused, tName, tArgs -> handleRefusedStep(warm, refused, tName, tArgs) },
+            onStepCompleted = { idx, tName -> recordCompletedStep(callTag, idx, tName) },
+            syncDisplayState = { syncDisplayStateLocked(warm) },
+            captureJpeg = { capturePreviewJpegLocked(warm) },
+        )
+    }
+
+    private suspend fun tryReplayGoalLocked(
+        warm: WarmSession,
+        goal: String,
+        startedMs: Long,
+        callTag: String,
+    ): ReplayAttempt {
+        val candidateCount = withContext(Dispatchers.IO) { runCatching { warm.routeStore.count() }.getOrDefault(0) }
+        if (candidateCount <= 0) return ReplayAttempt.NotApplicable
+        val modelSession = ModelSession.of(PersonalAgent.MAIN_CONVERSATION_ID)
+        val matcherModel = app.tasks.lightModelFactory(app, modelSession)
+            ?: app.tasks.modelFactory(app, modelSession)
+            ?: return ReplayAttempt.NotApplicable
+
+        val matcher = RouteMatcher(
+            model = matcherModel,
+            store = warm.routeStore,
+            knowledge = warm.knowledge,
+            decision = decisionModelProvider(),
+        )
+        if (withContext(Dispatchers.IO) { runCatching { matcher.candidates(goal).isEmpty() }.getOrDefault(true) }) {
+            return ReplayAttempt.NotApplicable
+        }
+        val choice: RouteChoice = withTimeoutOrNull(LIVE_ROUTE_MATCH_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) { runCatching { matcher.choose(goal) }.getOrNull() }
+        } ?: return ReplayAttempt.NotApplicable
+
+        choice.route.packages.forEach { warm.unlockPackageLinks(it) }
+        val total = choice.route.steps.size
+        _stepProgress.value = DirectStepProgress("replay", null, 1, total)
+
+        val replayer = Replayer(
+            tools = warm.dispatcher,
+            executor = warm.executor,
+            gate = warm.passGate,
+            sink = object : RunSink {
+                override fun event(e: RunEvent) {
+                    warm.turnSink.event(e)
+                    if (e is RunEvent.Replay && e.matched && e.step < e.total) {
+                        _stepProgress.value = DirectStepProgress("replay", null, e.step + 1, e.total)
+                    }
+                }
+                override fun media(mediaId: Int, png: ByteArray) = Unit
+            },
+        )
+
+        val out = try {
+            replayer.run(choice)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DirectGateStopException) {
+            return ReplayAttempt.Finished(statusEarly(startedMs, total, e.reason, e.userMessage))
+        } catch (e: Exception) {
+            Log.w(TAG, "Route replay failed, falling back", e)
+            return ReplayAttempt.NotApplicable
+        }
+
+        val nowMs = System.currentTimeMillis()
+        withContext(Dispatchers.IO) {
+            runCatching {
+                warm.routeStore.update(choice.route.id) { r ->
+                    when (out) {
+                        is ReplayOutcome.Completed -> r.copy(
+                            successes = r.successes + 1,
+                            consecutiveMisses = 0,
+                            missStep = null,
+                            lastUsedMs = nowMs,
+                        )
+                        is ReplayOutcome.Diverged -> {
+                            val misses = if (r.missStep == out.done) r.consecutiveMisses + 1 else 1
+                            r.copy(
+                                consecutiveMisses = misses,
+                                missStep = out.done,
+                                disabled = r.disabled || misses >= ROUTE_MISSES_TO_DISABLE,
+                                lastUsedMs = nowMs,
+                            )
+                        }
+                        is ReplayOutcome.StoppedForConfirmation -> r.copy(lastUsedMs = nowMs)
+                    }
+                }
+            }
+        }
+
+        return when (out) {
+            is ReplayOutcome.Completed -> {
+                repeat(out.done) { idx -> recordCompletedStep(callTag, idx, choice.route.steps[idx].tool) }
+                val readOut = runCatching {
+                    warm.executor.run(
+                        Part.ToolCall("live_${callTag}_replay_read", "phone_list_elements", "{}"),
+                        Origin.Batch(stepSeq.incrementAndGet()),
+                    )
+                }.getOrNull()
+                val finalScreen = (readOut as? ActionOutcome.Ran)?.exec?.content?.takeIf { it["ok"] == JsonPrimitive(true) }
+                syncDisplayStateLocked(warm)
+                val elapsed = SystemClock.elapsedRealtime() - startedMs
+                val doneLines = choice.route.steps.take(out.done)
+                    .mapIndexed { i, st -> "${i + 1}. ${Replayer.describe(st, choice.slots)}" }
+                    .joinToString("；")
+                ReplayAttempt.Finished(
+                    DirectActResult(
+                        payload = buildJsonObject {
+                            put("ok", true)
+                            put("mode", "route_replay")
+                            put("replayed", true)
+                            put("completed", out.done)
+                            put("total", total)
+                            put("elapsed_ms", elapsed)
+                            put("summary", "已按历史经验路线完成：${doneLines.take(180)}")
+                            finalScreen?.let { put("screen", compactScreen(it, slimSuccess = true)) }
+                        },
+                        elapsedMs = elapsed,
+                        completedSteps = out.done,
+                        totalSteps = total,
+                        ok = true,
+                    ),
+                )
+            }
+            is ReplayOutcome.StoppedForConfirmation -> {
+                repeat(out.done) { idx -> recordCompletedStep(callTag, idx, choice.route.steps[idx].tool) }
+                syncDisplayStateLocked(warm)
+                val confirmStep = choice.route.steps.getOrNull(out.done)
+                if (confirmStep != null) {
+                    val triggered = triggerReplayStepConfirmationLocked(warm, confirmStep, choice.slots, callTag)
+                    if (triggered != null) {
+                        val elapsed = SystemClock.elapsedRealtime() - startedMs
+                        return ReplayAttempt.Finished(
+                            DirectActResult(
+                                payload = buildJsonObject {
+                                    put("ok", false)
+                                    put("mode", "route_replay")
+                                    put("completed", out.done)
+                                    put("total", total)
+                                    put("stop_reason", triggered.first)
+                                    triggered.second?.let { put("message", it) }
+                                    put("elapsed_ms", elapsed)
+                                },
+                                elapsedMs = elapsed,
+                                completedSteps = out.done,
+                                totalSteps = total,
+                                ok = false,
+                            ),
+                        )
+                    }
+                }
+                val doneDesc = choice.route.steps.take(out.done)
+                    .mapIndexed { i, st -> "${i + 1}. ${Replayer.describe(st, choice.slots)}" }
+                    .joinToString("\n")
+                ReplayAttempt.DivergedAfterPartialProgress(
+                    "经验路线已完成前 ${out.done}/$total 步：\n$doneDesc\n下一步涉及不可逆确认动作，请在当前屏幕上定位并触发对应按钮确认。",
+                )
+            }
+            is ReplayOutcome.Diverged -> {
+                if (out.done == 0 && !out.executed) {
+                    ReplayAttempt.NotApplicable
+                } else {
+                    repeat(out.done) { idx -> recordCompletedStep(callTag, idx, choice.route.steps[idx].tool) }
+                    val doneDesc = choice.route.steps.take(out.done)
+                        .mapIndexed { i, st -> "${i + 1}. ${Replayer.describe(st, choice.slots)}" }
+                        .joinToString("\n")
+                    ReplayAttempt.DivergedAfterPartialProgress(
+                        "经验路线已完成前 ${out.done}/$total 步：\n$doneDesc\n在第 ${out.done + 1} 步出现界面差异（预期：${out.expected}），请基于当前屏幕继续完成目标。",
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun triggerReplayStepConfirmationLocked(
+        warm: WarmSession,
+        step: com.wangzan101.mika.core.replay.RouteStep,
+        slots: List<String>,
+        callTag: String,
+    ): Pair<String, String?>? {
+        val rawArgs = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(step.argsJson) as? JsonObject
+        }.getOrNull() ?: return null
+        val filledBase = LinkedHashMap<String, JsonElement>()
+        for ((k, v) in rawArgs) {
+            if (k == "ref" || k == "snapshotId" || k == "target") continue
+            filledBase[k] = if (v is JsonPrimitive && v.isString) {
+                JsonPrimitive(fillReplaySlots(v.content, slots) ?: return null)
+            } else {
+                v
+            }
+        }
+        val targetSel = step.target
+        if (targetSel != null) {
+            val wantedName = fillReplaySlots(targetSel.name, slots)?.takeIf { it.isNotEmpty() }
+            val qArgs = buildJsonObject {
+                wantedName?.let { put("text", it) }
+                targetSel.resourceId?.let { put("resourceId", it) }
+                targetSel.role?.let { put("role", it) }
+                put("limit", 50)
+            }
+            val qOut = warm.executor.run(
+                Part.ToolCall("live_${callTag}_replay_confirm_q", "phone_query", qArgs.toString()),
+                Origin.Script(stepSeq.incrementAndGet()),
+            )
+            val qContent = (qOut as? ActionOutcome.Ran)?.exec?.content ?: return null
+            val sid = (qContent["snapshotId"] as? JsonPrimitive)?.contentOrNull ?: return null
+            val matches = (qContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            val editable = step.tool == "phone_type_text" || step.tool == "phone_clear_text"
+            val candidates = LiveDirectDecision.selectNarrowedCandidates(matches, wantedName, editable)
+            val chosen = candidates.singleOrNull() ?: return null
+            filledBase["ref"] = JsonPrimitive(chosen.ref)
+            filledBase["snapshotId"] = JsonPrimitive(sid)
+        }
+        val callArgs = JsonObject(filledBase)
+        val out = warm.executor.run(
+            Part.ToolCall("live_${callTag}_replay_confirm", step.tool, callArgs.toString()),
+            Origin.Batch(stepSeq.incrementAndGet()),
+        )
+        return if (out is ActionOutcome.Refused) {
+            handleRefusedStep(warm, out, step.tool, callArgs)
+        } else {
+            null
+        }
+    }
+
     internal data class ResolvedToolStep(
         val toolName: String? = null,
         val toolArgs: JsonObject? = null,
@@ -835,6 +1517,7 @@ class LiveDirectPhoneController internal constructor(
     )
 
     private suspend fun resolveToolCall(
+        warm: WarmSession,
         executor: ActionExecutor,
         callTag: String,
         index: Int,
@@ -851,9 +1534,10 @@ class LiveDirectPhoneController internal constructor(
                 },
             )
         }
+        "open_link" -> buildDirectOpenLinkStep(command)
         "tap", "type", "clear" -> {
             val editable = op != "tap"
-            val target = selectTargetOnScreen(executor, callTag, index, op, command, editable)
+            val target = selectTargetOnScreen(warm, executor, callTag, index, op, command, editable)
             if (target.error != null) {
                 ResolvedToolStep(error = target.error)
             } else if (op == "tap") {
@@ -924,6 +1608,7 @@ class LiveDirectPhoneController internal constructor(
     )
 
     private suspend fun selectTargetOnScreen(
+        warm: WarmSession,
         executor: ActionExecutor,
         callTag: String,
         index: Int,
@@ -966,10 +1651,10 @@ class LiveDirectPhoneController internal constructor(
         }
 
         val fallbackError = if (narrowed.isEmpty() && !truncated) "target_not_found" else "ambiguous_target"
-        val decision = decisionModelProvider() ?: return SelectedTarget(error = fallbackError)
+        val decision = decisionModelProvider()
         val currentApp = (qContent["currentApp"] as? JsonPrimitive)?.contentOrNull ?: _foregroundApp.value
 
-        if (narrowed.size >= 2 && !truncated) {
+        if (decision != null && narrowed.size >= 2 && !truncated) {
             val chosenRef = LiveDirectDecision.chooseTargetWithJev(
                 decision = decision,
                 op = op,
@@ -977,6 +1662,7 @@ class LiveDirectPhoneController internal constructor(
                 candidates = narrowed,
                 currentApp = currentApp,
                 userUtterance = userUtteranceProvider(),
+                timeoutMs = LiveDirectDecision.LIVE_FAST_DISAMBIG_TIMEOUT_MS,
             )
             if (chosenRef != null) {
                 return SelectedTarget(ref = chosenRef, snapshotId = sid)
@@ -984,36 +1670,63 @@ class LiveDirectPhoneController internal constructor(
             return SelectedTarget(error = fallbackError)
         }
 
-        val fullOut = executor.run(
-            Part.ToolCall(
-                "live_${callTag}_${index + 1}_full_query",
-                "phone_query",
-                buildJsonObject { put("limit", 100) }.toString(),
-            ),
-            Origin.Script(stepSeq.incrementAndGet()),
-        )
-        if (fullOut is ActionOutcome.Refused) return SelectedTarget(error = fullOut.code)
-        val fullContent = (fullOut as? ActionOutcome.Ran)?.exec?.content
-        if (fullContent?.get("ok") == JsonPrimitive(true)) {
-            val fullSid = (fullContent["snapshotId"] as? JsonPrimitive)?.contentOrNull ?: sid
-            val fullMatches = (fullContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
-            val screenCandidates = LiveDirectDecision.extractScreenCandidates(
-                matches = fullMatches,
-                editable = editable,
-                allowTapToFocusFallback = op == "type",
+        if (decision != null) {
+            val fullOut = executor.run(
+                Part.ToolCall(
+                    "live_${callTag}_${index + 1}_full_query",
+                    "phone_query",
+                    buildJsonObject { put("limit", 100) }.toString(),
+                ),
+                Origin.Script(stepSeq.incrementAndGet()),
             )
-            val chosenRef = LiveDirectDecision.chooseTargetWithJev(
-                decision = decision,
-                op = op,
-                command = command,
-                candidates = screenCandidates,
-                currentApp = (fullContent["currentApp"] as? JsonPrimitive)?.contentOrNull ?: currentApp,
-                userUtterance = userUtteranceProvider(),
-            )
-            if (chosenRef != null) {
-                return SelectedTarget(ref = chosenRef, snapshotId = fullSid)
+            if (fullOut is ActionOutcome.Refused) return SelectedTarget(error = fullOut.code)
+            val fullContent = (fullOut as? ActionOutcome.Ran)?.exec?.content
+            if (fullContent?.get("ok") == JsonPrimitive(true)) {
+                var fullSid = (fullContent["snapshotId"] as? JsonPrimitive)?.contentOrNull ?: sid
+                val fullMatches = (fullContent["matches"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                val baseCandidates = LiveDirectDecision.extractScreenCandidates(
+                    matches = fullMatches,
+                    editable = editable,
+                    allowTapToFocusFallback = op == "type",
+                )
+                val screenCandidates = if (fullContent["truncated"] == JsonPrimitive(true)) {
+                    val listOut = runCatching {
+                        executor.run(
+                            Part.ToolCall("live_${callTag}_${index + 1}_list_all", "phone_list_elements", "{}"),
+                            Origin.Script(stepSeq.incrementAndGet()),
+                        )
+                    }.getOrNull()
+                    val listContent = (listOut as? ActionOutcome.Ran)?.exec?.content
+                    if (listContent?.get("ok") == JsonPrimitive(true)) {
+                        (listContent["snapshotId"] as? JsonPrimitive)?.contentOrNull?.let { fullSid = it }
+                        val listElements = (listContent["elements"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                        LiveDirectDecision.mergeListElementsIntoCandidates(
+                            primary = baseCandidates,
+                            listElements = listElements,
+                            editable = editable,
+                            allowTapToFocusFallback = op == "type",
+                        )
+                    } else {
+                        baseCandidates
+                    }
+                } else {
+                    baseCandidates
+                }
+                val chosenRef = LiveDirectDecision.chooseTargetWithJev(
+                    decision = decision,
+                    op = op,
+                    command = command,
+                    candidates = screenCandidates,
+                    currentApp = (fullContent["currentApp"] as? JsonPrimitive)?.contentOrNull ?: currentApp,
+                    userUtterance = userUtteranceProvider(),
+                    timeoutMs = LiveDirectDecision.LIVE_FAST_DISAMBIG_TIMEOUT_MS,
+                )
+                if (chosenRef != null) {
+                    return SelectedTarget(ref = chosenRef, snapshotId = fullSid)
+                }
             }
         }
+
         return SelectedTarget(error = fallbackError)
     }
 
@@ -1114,7 +1827,7 @@ class LiveDirectPhoneController internal constructor(
         }
     }
 
-    internal suspend fun captureSettledStageGuidance(): LiveUserTouchCoordinator.CapturedGuidanceState? {
+    internal suspend fun captureSettledStageGuidance(includeJpeg: Boolean = false): LiveUserTouchCoordinator.CapturedGuidanceState? {
         val warm = session ?: return null
         if (warm.display.current == null || !warm.shell.asBinder().isBinderAlive) return null
         return withContext(Dispatchers.IO) {
@@ -1127,12 +1840,50 @@ class LiveDirectPhoneController internal constructor(
                 _foregroundApp.value = ConfirmationNotifier.appLabel(app, targetPkg)
             }
             warm.syncPreview()
-            val jpeg = capturePreviewJpegLocked(warm)
+            val jpeg = if (includeJpeg) capturePreviewJpegLocked(warm) else null
             val summary = LiveUserTouchCoordinator.summarizeSnapshot(snap)
             if (summary.isBlank() && jpeg == null) null
             else LiveUserTouchCoordinator.CapturedGuidanceState(
                 appLabel = _foregroundApp.value,
                 screenSummary = summary,
+                jpegFrame = jpeg,
+            )
+        }
+    }
+
+    /**
+     * 当机主正在前台查看实时虚拟屏舞台时，按需零 OCR 读取当前虚拟屏画面与可读控件摘要（`< 80ms`），
+     * 避免误调用物理主屏 `MediaProjection` 截取到 Mika 自身外壳或触发慢速 OCR。
+     */
+    internal suspend fun observeActiveStageIfOpen(): DirectStageObservation? {
+        val warm = session ?: return null
+        if (warm.display.current == null || !warm.appShown.value || !warm.shell.asBinder().isBinderAlive) return null
+        return withContext(Dispatchers.IO) {
+            val label = _foregroundApp.value ?: _foregroundPackage.value.orEmpty()
+            if (warm.privateScreen.imagesPrivate) {
+                return@withContext DirectStageObservation(
+                    appLabel = label,
+                    screenText = "",
+                    blocked = true,
+                    jpegFrame = null,
+                )
+            }
+            val snap = runCatching { warm.privateScreen.peek() }.getOrNull()
+            if (snap?.protected == true) {
+                return@withContext DirectStageObservation(
+                    appLabel = label,
+                    screenText = "",
+                    blocked = true,
+                    jpegFrame = null,
+                )
+            }
+            val jpeg = capturePreviewJpegLocked(warm)
+            val summary = LiveUserTouchCoordinator.summarizeSnapshot(snap)
+            if (jpeg == null && summary.isBlank()) return@withContext null
+            DirectStageObservation(
+                appLabel = label,
+                screenText = summary,
+                blocked = false,
                 jpegFrame = jpeg,
             )
         }
@@ -1412,6 +2163,43 @@ class LiveDirectPhoneController internal constructor(
 
             val privateScreen = SmsPrivateScreen(accessGuard).also { smsPrivacy = it }
 
+            val speedFlags = FeatureFlags.get(app).speedFlags()
+            val memoryRuntime = MemoryRuntime.of(app)
+            val legacy = legacyNames()
+            val userNotes = withContext(Dispatchers.IO) {
+                runCatching { KnowledgeStore.loadNotes(File(app.filesDir, "personal")) }.getOrDefault(emptyMap())
+            }
+            val learnedNotes = withContext(Dispatchers.IO) {
+                runCatching {
+                    memoryRuntime.appKnowledge().notes().mapValues { (_, note) ->
+                        note.copy(text = legacy.rewrite(note.text))
+                    }
+                }.getOrDefault(emptyMap())
+            }
+            val sessionKnowledge = KnowledgeStore(bundledEntries, userNotes, learnedNotes)
+            val sessionCatalog = GuideCatalog.withPersonal(
+                bundledCatalog,
+                memoryRuntime.skills(),
+                legacy::rewrite,
+                plugins = app.plugins.skillsSnapshot(),
+            )
+            val modelSession = ModelSession.of(PersonalAgent.MAIN_CONVERSATION_ID)
+            val visionService = app.tasks.visionModelFactory(app, modelSession)?.let { VisionService(it, BitmapImageOps) }
+            val routeStore = FileRouteStore.shared(app)
+            val turnEventsLock = Any()
+            val turnEventsBuffer = ArrayList<RunEvent>(64)
+            val turnSink = object : RunSink {
+                override fun event(e: RunEvent) {
+                    synchronized(turnEventsLock) {
+                        if (turnEventsBuffer.size >= MAX_TURN_EVENTS) {
+                            turnEventsBuffer.removeAt(0)
+                        }
+                        turnEventsBuffer += e
+                    }
+                }
+                override fun media(mediaId: Int, png: ByteArray) = Unit
+            }
+
             val runApproval = app.approvalControl.start(alwaysAsk = true).also { approval = it }
             val confirmations = runApproval.gate() ?: ConfirmationGate()
             val spec = RunSpec(
@@ -1424,19 +2212,24 @@ class LiveDirectPhoneController internal constructor(
             val dispatcher = toolDispatcher(
                 screen = privateScreen,
                 visionEnabled = true,
+                skills = sessionCatalog,
+                vision = visionService,
                 stableRefs = true,
                 inlineScreen = true,
                 adaptiveVision = true,
-                deepLinks = false,
+                deepLinks = speedFlags.deepLinks,
                 appPacing = {
                     if (waitProfileProvider().turbo) AppPacing.Off
                     else FeatureFlags.get(app).operatingPace().appPacing()
                 },
+                appPace = { pkg -> PlacePace.of(sessionCatalog.appPace(pkg)) },
                 appIdleScroll = { null },
                 imageOps = BitmapImageOps,
                 runSpec = spec,
                 conversationId = PersonalAgent.MAIN_CONVERSATION_ID,
-            )
+            ).also {
+                it.captureTargets = speedFlags.replay
+            }
 
             lateinit var warmRef: WarmSession
             warmRef = WarmSession(
@@ -1454,11 +2247,18 @@ class LiveDirectPhoneController internal constructor(
                 accessGuard = accessGuard,
                 privateScreen = privateScreen,
                 dispatcher = dispatcher,
+                knowledge = sessionKnowledge,
+                catalog = sessionCatalog,
+                visionService = visionService,
+                routeStore = routeStore,
+                turnSink = turnSink,
+                turnEventsBuffer = turnEventsBuffer,
+                turnEventsLock = turnEventsLock,
                 approval = runApproval,
                 confirmations = confirmations,
                 pacing = OutwardPacing.human(),
                 mute = audio,
-                recorder = ActionRecorder(RunSink.NONE),
+                recorder = ActionRecorder(turnSink),
                 appShown = appShown,
                 syncPreview = ::syncPreviewNow,
                 passGate = { passDirectGate(warmRef) },
@@ -1709,17 +2509,51 @@ class LiveDirectPhoneController internal constructor(
                 )
             }
         }
+        internal fun buildDirectOpenLinkStep(command: JsonObject): ResolvedToolStep {
+            val action = command.string("settingsAction") ?: command.string("action")
+            val uri = command.string("uri")
+            val pkg = if (action == null) command.string("packageName") ?: command.string("package") else null
+            val policyError = LinkPolicy.check(action = action, uri = uri, pkg = pkg)
+            if (policyError != null) {
+                return ResolvedToolStep(error = "invalid_link")
+            }
+            return ResolvedToolStep(
+                toolName = "phone_open_link",
+                toolArgs = buildJsonObject {
+                    uri?.let { put("uri", it) }
+                    action?.let { put("action", it) }
+                    pkg?.let { put("package", it) }
+                },
+            )
+        }
+
         internal const val MAX_ELEMENTS_IN_SUMMARY = 72
+        internal const val MAX_SLIM_ELEMENTS_IN_SUMMARY = 24
         internal const val MAX_VISIBLE_TEXT_IN_SUMMARY = 40
+        internal const val MAX_SLIM_VISIBLE_TEXT_IN_SUMMARY = 16
+        internal const val MAX_INLINE_APP_GUIDE_CHARS = 320
+        private const val LIVE_ROUTE_MATCH_TIMEOUT_MS = 3_000L
+        private const val ROUTE_MISSES_TO_DISABLE = 2
+        private const val MAX_TURN_EVENTS = 160
         private const val MAX_PREVIEW_LONG_EDGE = 720
         private const val PREVIEW_JPEG_QUALITY = 68
 
+        private val SLOT_TOKEN_RE = Regex("\\{(\\d+)\\}")
+
         private val SUPPORTED_OPS = setOf(
-            "launch", "tap", "type", "clear", "scroll", "swipe", "key", "back", "wait", "assert", "observe",
+            "launch", "open_link", "tap", "type", "clear", "scroll", "swipe", "key", "back", "wait", "assert", "observe",
         )
 
+        private val bundledEntries by lazy {
+            runCatching { KnowledgeStore.loadBundled() }.getOrElse { emptyList() }
+        }
+
+        private val bundledCatalog: GuideCatalog by lazy {
+            runCatching { GuideCatalog.loadBundled() }.getOrElse { error("Bundled GuideCatalog unavailable") }
+        }
+
         private val bundledKnowledge: KnowledgeStore by lazy {
-            runCatching { KnowledgeStore(KnowledgeStore.loadBundled()) }.getOrElse { KnowledgeStore(emptyList()) }
+            KnowledgeStore(bundledEntries)
         }
 
         private val COMMON_APP_ALIASES: Map<String, List<String>> = mapOf(
@@ -1815,7 +2649,9 @@ class LiveDirectPhoneController internal constructor(
         private fun normalizeAppKey(raw: String): String =
             raw.trim().lowercase().replace(" ", "").replace("　", "")
 
-        internal fun compactScreen(screen: JsonObject): JsonObject = buildJsonObject {
+        internal fun compactScreen(screen: JsonObject, slimSuccess: Boolean = false): JsonObject = buildJsonObject {
+            val elemCap = if (slimSuccess) MAX_SLIM_ELEMENTS_IN_SUMMARY else MAX_ELEMENTS_IN_SUMMARY
+            val textCap = if (slimSuccess) MAX_SLIM_VISIBLE_TEXT_IN_SUMMARY else MAX_VISIBLE_TEXT_IN_SUMMARY
             (screen["currentApp"] as? JsonPrimitive)?.contentOrNull?.let { put("currentApp", it) }
             (screen["protected"] as? JsonPrimitive)?.booleanOrNull?.let { if (it) put("protected", true) }
             (screen["readable"] as? JsonPrimitive)?.booleanOrNull?.let { put("readable", it) }
@@ -1823,17 +2659,21 @@ class LiveDirectPhoneController internal constructor(
             (screen["hint"] as? JsonPrimitive)?.contentOrNull?.let { put("hint", it) }
             (screen["elements"] as? JsonArray)?.let { elements ->
                 put("elementCount", elements.size)
-                put("elements", JsonArray(elements.take(MAX_ELEMENTS_IN_SUMMARY)))
-                if (elements.size > MAX_ELEMENTS_IN_SUMMARY) put("elementsTruncated", true)
+                put("elements", JsonArray(elements.take(elemCap)))
+                if (elements.size > elemCap) put("elementsTruncated", true)
             }
             (screen["visibleText"] as? JsonArray)?.let { lines ->
                 if (lines.isNotEmpty()) {
-                    put("visibleText", JsonArray(lines.take(MAX_VISIBLE_TEXT_IN_SUMMARY)))
+                    put("visibleText", JsonArray(lines.take(textCap)))
                 }
             }
         }
 
-        internal fun shouldAttachVisualFrame(stopReason: String?, rawScreen: JsonObject?): Boolean {
+        internal fun shouldAttachVisualFrame(
+            stopReason: String?,
+            rawScreen: JsonObject?,
+            suppressDenseSuccessFrame: Boolean = false,
+        ): Boolean {
             if (rawScreen?.get("protected") == JsonPrimitive(true)) return false
             if (
                 stopReason == "screen_needs_review" ||
@@ -1844,7 +2684,29 @@ class LiveDirectPhoneController internal constructor(
             }
             if (rawScreen?.get("imageReason") != null) return true
             val elements = rawScreen?.get("elements") as? JsonArray ?: return false
-            return elements.size <= 2 || elements.size > MAX_ELEMENTS_IN_SUMMARY
+            if (elements.size <= 2) return true
+            if (suppressDenseSuccessFrame && stopReason == null) return false
+            return elements.size > MAX_ELEMENTS_IN_SUMMARY
+        }
+
+        internal fun compactGuideSnippet(rawBody: String, maxChars: Int = MAX_INLINE_APP_GUIDE_CHARS): String {
+            val compact = rawBody.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("```") }
+                .joinToString(" | ")
+            return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
+        }
+
+        private fun fillReplaySlots(template: String, slots: List<String>): String? {
+            var ok = true
+            val replaced = SLOT_TOKEN_RE.replace(template) { m ->
+                val idx = (m.groupValues[1].toIntOrNull() ?: 0) - 1
+                if (idx in slots.indices) slots[idx] else {
+                    ok = false
+                    ""
+                }
+            }
+            return if (ok) replaced else null
         }
 
         private fun compressBitmapJpeg(bitmap: Bitmap): ByteArray {

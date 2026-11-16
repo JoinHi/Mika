@@ -21,7 +21,9 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class LiveTurnCoordinatorTest {
 
-    private class FakeRealtimeSession : LiveRealtimeSession {
+    private class FakeRealtimeSession(
+        override val capabilities: LiveProviderCapabilities = LiveProviderCapabilities.DEFAULT_RICH,
+    ) : LiveRealtimeSession {
         override val events: Flow<GeminiLiveEvent> = emptyFlow()
         val videoJpegs = mutableListOf<ByteArray>()
         val contextUpdates = mutableListOf<Pair<String, Boolean>>()
@@ -172,5 +174,109 @@ class LiveTurnCoordinatorTest {
         assertTrue(LiveSessionPolicy.shouldClearResumptionHandle(1007, "Invalid resumption token"))
         assertTrue(LiveSessionPolicy.shouldClearResumptionHandle(404, "session not found"))
         assertFalse(LiveSessionPolicy.shouldClearResumptionHandle(1006, "network eof"))
+    }
+
+    @Test
+    fun coordinatorSuppressesVideoJpegWhenProviderDoesNotSupportVisualFrames() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val audioOnlySession = FakeRealtimeSession(capabilities = LiveProviderCapabilities.VOLC_SIDECAR_ONLY)
+        var nowMs = 10_000L
+        val coordinator = LiveTurnCoordinator(
+            scope = scope,
+            sessionProvider = { audioOnlySession },
+            signalProvider = { LiveTurnSignalSnapshot(sessionActive = true, speaking = false, liveUserTranscript = "", inputLevel = 0f) },
+            userTouchingProvider = { false },
+            clockMs = { nowMs },
+        )
+
+        coordinator.enqueue(
+            LiveAsyncEvent.DirectConfirmationFeedback(
+                prompt = "[系统事件·操作完成]",
+                jpegFrame = byteArrayOf(1, 2, 3, 4),
+            ),
+        )
+        runCurrent()
+        nowMs += 1_500L
+        advanceTimeBy(1_500L)
+        runCurrent()
+
+        assertTrue("Audio-only providers must never receive sendVideoJpeg", audioOnlySession.videoJpegs.isEmpty())
+        assertEquals(1, audioOnlySession.contextUpdates.size)
+        assertTrue(audioOnlySession.contextUpdates.single().first.contains("操作完成"))
+    }
+
+    @Test
+    fun silentTouchGuidanceSyncsContextWithoutTriggeringSpeechAndCancelPendingStageEventsPurgesPreemptedWork() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val session = FakeRealtimeSession()
+        var nowMs = 10_000L
+        val coordinator = LiveTurnCoordinator(
+            scope = scope,
+            sessionProvider = { session },
+            signalProvider = { LiveTurnSignalSnapshot(sessionActive = true, speaking = false, liveUserTranscript = "", inputLevel = 0f) },
+            userTouchingProvider = { false },
+            clockMs = { nowMs },
+        )
+
+        // 1. Standalone manual touch defaults to silent state sync (triggerResponse=false, zero JPEG frame spam)
+        coordinator.enqueue(
+            LiveAsyncEvent.UserTouchGuidance(
+                appLabel = "设置",
+                screenSummary = "[可点] 应用设置",
+                jpegFrame = byteArrayOf(7, 8, 9),
+                touchCount = 3,
+            ),
+        )
+        runCurrent()
+        assertEquals("Silent touch must not spam JPEG frames when no spoken turn is triggered", 0, session.videoJpegs.size)
+        assertEquals(1, session.contextUpdates.size)
+        val (touchPrompt, touchTrigger) = session.contextUpdates.single()
+        assertFalse("Manual touch sync must not force unsolicited speech", touchTrigger)
+        assertTrue(touchPrompt.contains("静默界面同步"))
+
+        // 2. StageGoalFinished deduplicates older stage results, and cancelPendingStageEvents purges stage/touch events while keeping DeepThink
+        var userSpeaking = true
+        val gatedCoordinator = LiveTurnCoordinator(
+            scope = scope,
+            sessionProvider = { session },
+            signalProvider = {
+                LiveTurnSignalSnapshot(
+                    sessionActive = true,
+                    speaking = false,
+                    liveUserTranscript = if (userSpeaking) "帮我换一个打开微信" else "",
+                    inputLevel = if (userSpeaking) 0.2f else 0f,
+                )
+            },
+            userTouchingProvider = { false },
+            clockMs = { nowMs },
+        )
+        gatedCoordinator.enqueue(
+            LiveAsyncEvent.StageGoalFinished(
+                goalId = "stage_1",
+                goal = "搜乒乓球桌",
+                ok = true,
+                summary = "旧结果",
+            ),
+        )
+        gatedCoordinator.enqueue(
+            LiveAsyncEvent.AsyncExtendedToolResult(
+                intent = "创建每天早上8点提醒",
+                resultSummary = """{"ok":true,"id":"s1"}""",
+            ),
+        )
+        // New phone command preempts the stage track -> purges stage_1, keeps extended tool result
+        gatedCoordinator.cancelPendingStageEvents()
+        userSpeaking = false
+        nowMs += 2_000L
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertEquals(2, session.contextUpdates.size)
+        val (secondPrompt, secondTrigger) = session.contextUpdates[1]
+        assertTrue(secondTrigger)
+        assertFalse("Preempted stage goal event must be purged", secondPrompt.contains("搜乒乓球桌"))
+        assertTrue(secondPrompt.contains("创建每天早上8点提醒"))
     }
 }

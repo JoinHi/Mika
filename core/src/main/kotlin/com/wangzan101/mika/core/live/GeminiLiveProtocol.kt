@@ -1,6 +1,5 @@
 package com.wangzan101.mika.core.live
 
-import com.wangzan101.mika.core.model.ToolSpec
 import com.wangzan101.mika.core.model.Usage
 import java.net.URI
 import java.util.Base64
@@ -20,82 +19,20 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
-enum class LiveToolBehavior(val wire: String) {
-    BLOCKING("BLOCKING"),
-    NON_BLOCKING("NON_BLOCKING"),
-}
-
-enum class LiveScheduling(val wire: String) {
-    SILENT("SILENT"),
-    WHEN_IDLE("WHEN_IDLE"),
-    INTERRUPT("INTERRUPT"),
-}
-
-data class LiveToolSpec(
-    val spec: ToolSpec,
-    val behavior: LiveToolBehavior = LiveToolBehavior.NON_BLOCKING,
-)
-
-data class LiveFunctionCall(
-    val id: String,
-    val name: String,
-    val args: JsonObject,
-)
-
-data class LiveFunctionResponse(
-    val id: String,
-    val name: String,
-    val output: JsonObject,
-    val scheduling: LiveScheduling? = null,
-)
-
-data class GeminiLiveSetup(
-    val model: String = GeminiLiveProtocol.DEFAULT_MODEL,
-    val systemInstruction: String = "",
-    val voiceName: String = GeminiLiveProtocol.DEFAULT_VOICE,
-    val tools: List<LiveToolSpec> = emptyList(),
-    val resumptionHandle: String? = null,
-    val enableSlidingWindow: Boolean = true,
-    val enableTranscription: Boolean = true,
-    val includeNonBlockingBehavior: Boolean = true,
-)
-
-sealed interface GeminiLiveEvent {
-    data object SetupComplete : GeminiLiveEvent
-
-    class AudioDelta(val pcm24kLe: ByteArray) : GeminiLiveEvent {
-        override fun equals(other: Any?): Boolean =
-            this === other || (other is AudioDelta && pcm24kLe.contentEquals(other.pcm24kLe))
-
-        override fun hashCode(): Int = pcm24kLe.contentHashCode()
-    }
-
-    data class InputTranscriptDelta(val text: String) : GeminiLiveEvent
-
-    data class OutputTranscriptDelta(val text: String) : GeminiLiveEvent
-
-    data object Interrupted : GeminiLiveEvent
-
-    data object TurnComplete : GeminiLiveEvent
-
-    data class ToolCalls(val calls: List<LiveFunctionCall>) : GeminiLiveEvent
-
-    data class ToolCallCancelled(val ids: List<String>) : GeminiLiveEvent
-
-    data class SessionResumptionUpdate(val newHandle: String?, val resumable: Boolean) : GeminiLiveEvent
-
-    data class GoAway(val timeLeft: String?) : GeminiLiveEvent
-
-    data class UsageReport(val usage: Usage) : GeminiLiveEvent
-
-    data class Closed(val code: Int, val reason: String, val error: Throwable? = null) : GeminiLiveEvent
-}
-
 object GeminiLiveProtocol {
     const val INPUT_SAMPLE_RATE = 16_000
     const val OUTPUT_SAMPLE_RATE = 24_000
     const val DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
     const val DEFAULT_VOICE = "Aoede"
+
+    val GEMINI_CAPABILITIES = LiveProviderCapabilities(
+        toolTier = LiveToolTier.RICH_TOOLS,
+        supportsNonBlockingTools = true,
+        supportsVisualFrames = true,
+        supportsResumption = true,
+        inputSampleRateHz = INPUT_SAMPLE_RATE,
+        outputSampleRateHz = OUTPUT_SAMPLE_RATE,
+    )
 
     val VOICES = listOf("Aoede", "Kore", "Puck", "Charon", "Fenrir", "Leda", "Orus", "Zephyr")
 
@@ -292,29 +229,32 @@ object GeminiLiveProtocol {
         val events = ArrayList<GeminiLiveEvent>(4)
 
         if ("setupComplete" in root) {
-            events += GeminiLiveEvent.SetupComplete
+            events += LiveSessionEvent.SetupComplete
         }
 
         (root["sessionResumptionUpdate"] as? JsonObject)?.let { res ->
             val handle = (res["newHandle"] as? JsonPrimitive)?.contentOrNull
             val resumable = (res["resumable"] as? JsonPrimitive)?.booleanOrNull ?: (handle != null)
-            events += GeminiLiveEvent.SessionResumptionUpdate(handle, resumable)
+            events += LiveSessionEvent.SessionResumptionUpdate(handle, resumable)
         }
 
         (root["goAway"] as? JsonObject)?.let { goAway ->
             val timeLeft = (goAway["timeLeft"] as? JsonPrimitive)?.contentOrNull
-            events += GeminiLiveEvent.GoAway(timeLeft)
+            events += LiveSessionEvent.GoAway(timeLeft)
         }
 
         (root["serverContent"] as? JsonObject)?.let { content ->
             val interrupted = (content["interrupted"] as? JsonPrimitive)?.booleanOrNull == true
             if (interrupted) {
-                events += GeminiLiveEvent.Interrupted
+                events += LiveSessionEvent.Interrupted
             }
 
             (content["inputTranscription"] as? JsonObject)?.let { tr ->
                 val text = (tr["text"] as? JsonPrimitive)?.contentOrNull
-                if (!text.isNullOrEmpty()) events += GeminiLiveEvent.InputTranscriptDelta(text)
+                if (!text.isNullOrEmpty()) events += LiveSessionEvent.InputTranscriptDelta(text)
+                if ((tr["finished"] as? JsonPrimitive)?.booleanOrNull == true && !text.isNullOrBlank()) {
+                    events += LiveSessionEvent.InputTranscriptCompleted(text.trim())
+                }
             }
 
             (content["modelTurn"] as? JsonObject)?.let { turn ->
@@ -327,7 +267,7 @@ object GeminiLiveProtocol {
                         val data = (inline["data"] as? JsonPrimitive)?.contentOrNull
                         if (!data.isNullOrEmpty() && mime.startsWith("audio/pcm", ignoreCase = true)) {
                             runCatching { Base64.getDecoder().decode(data) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let {
-                                events += GeminiLiveEvent.AudioDelta(it)
+                                events += LiveSessionEvent.AudioDelta(it)
                             }
                         }
                     }
@@ -336,12 +276,12 @@ object GeminiLiveProtocol {
 
             (content["outputTranscription"] as? JsonObject)?.let { tr ->
                 val text = (tr["text"] as? JsonPrimitive)?.contentOrNull
-                if (!text.isNullOrEmpty()) events += GeminiLiveEvent.OutputTranscriptDelta(text)
+                if (!text.isNullOrEmpty()) events += LiveSessionEvent.OutputTranscriptDelta(text)
             }
 
             val turnComplete = (content["turnComplete"] as? JsonPrimitive)?.booleanOrNull == true
             if (turnComplete) {
-                events += GeminiLiveEvent.TurnComplete
+                events += LiveSessionEvent.TurnComplete
             }
         }
 
@@ -354,14 +294,14 @@ object GeminiLiveProtocol {
                 val args = (obj["args"] as? JsonObject) ?: JsonObject(emptyMap())
                 LiveFunctionCall(id, name, args)
             }.orEmpty()
-            if (parsed.isNotEmpty()) events += GeminiLiveEvent.ToolCalls(parsed)
+            if (parsed.isNotEmpty()) events += LiveSessionEvent.ToolCalls(parsed)
         }
 
         (root["toolCallCancellation"] as? JsonObject)?.let { cancel ->
             val ids = (cancel["ids"] as? JsonArray)
                 ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
                 .orEmpty()
-            if (ids.isNotEmpty()) events += GeminiLiveEvent.ToolCallCancelled(ids)
+            if (ids.isNotEmpty()) events += LiveSessionEvent.ToolCallCancelled(ids)
         }
 
         (root["usageMetadata"] as? JsonObject)?.let { um ->
@@ -372,7 +312,7 @@ object GeminiLiveProtocol {
             val cached = (um["cachedContentTokenCount"] as? JsonPrimitive)?.intOrNull ?: 0
             val thoughts = (um["thoughtsTokenCount"] as? JsonPrimitive)?.intOrNull ?: 0
             if (prompt > 0 || response > 0 || cached > 0 || thoughts > 0) {
-                events += GeminiLiveEvent.UsageReport(
+                events += LiveSessionEvent.UsageReport(
                     Usage(
                         inputTokens = prompt.coerceAtLeast(0),
                         outputTokens = (response + thoughts).coerceAtLeast(0),

@@ -115,8 +115,8 @@ class GeminiLiveProtocolTest {
     @Test
     fun realtimeFramesAndToolResponsesUseModernWireFields() {
         val pcm = byteArrayOf(1, 2, 3, 4)
-        assertEquals(GeminiLiveEvent.AudioDelta(byteArrayOf(1, 2, 3, 4)), GeminiLiveEvent.AudioDelta(pcm))
-        assertNotEquals(GeminiLiveEvent.AudioDelta(byteArrayOf(9, 9)), GeminiLiveEvent.AudioDelta(pcm))
+        assertEquals(LiveSessionEvent.AudioDelta(byteArrayOf(1, 2, 3, 4)), LiveSessionEvent.AudioDelta(pcm))
+        assertNotEquals(LiveSessionEvent.AudioDelta(byteArrayOf(9, 9)), LiveSessionEvent.AudioDelta(pcm))
 
         val audioObj = json.parseToJsonElement(GeminiLiveProtocol.buildAudioChunkFrame(pcm)).jsonObject
             .getValue("realtimeInput").jsonObject.getValue("audio").jsonObject
@@ -178,21 +178,41 @@ class GeminiLiveProtocolTest {
         """.trimIndent()
 
         val events = GeminiLiveProtocol.parseServerFrame(frame)
-        assertTrue(events.any { it is GeminiLiveEvent.SessionResumptionUpdate && it.newHandle == "h-42" && it.resumable })
-        assertTrue(events.any { it is GeminiLiveEvent.GoAway && it.timeLeft == "30s" })
-        assertTrue(events.any { it is GeminiLiveEvent.Interrupted })
-        assertTrue(events.any { it is GeminiLiveEvent.InputTranscriptDelta && it.text == "帮我打开微信" })
-        val audio = events.filterIsInstance<GeminiLiveEvent.AudioDelta>().single()
+        assertTrue(events.any { it is LiveSessionEvent.SessionResumptionUpdate && it.newHandle == "h-42" && it.resumable })
+        assertTrue(events.any { it is LiveSessionEvent.GoAway && it.timeLeft == "30s" })
+        assertTrue(events.any { it is LiveSessionEvent.Interrupted })
+        assertTrue(events.any { it is LiveSessionEvent.InputTranscriptDelta && it.text == "帮我打开微信" })
+        val audio = events.filterIsInstance<LiveSessionEvent.AudioDelta>().single()
         assertArrayEquals(pcm24k, audio.pcm24kLe)
-        assertTrue(events.any { it is GeminiLiveEvent.OutputTranscriptDelta && it.text == "好的，正在打开微信" })
-        assertTrue(events.any { it is GeminiLiveEvent.TurnComplete })
-        val calls = events.filterIsInstance<GeminiLiveEvent.ToolCalls>().single().calls
+        assertTrue(events.any { it is LiveSessionEvent.OutputTranscriptDelta && it.text == "好的，正在打开微信" })
+        assertTrue(events.any { it is LiveSessionEvent.TurnComplete })
+        val calls = events.filterIsInstance<LiveSessionEvent.ToolCalls>().single().calls
         assertEquals(2, calls.size)
         assertEquals("fc-1", calls[0].id)
         assertEquals("live-1-remember", calls[1].id)
-        assertEquals(listOf("fc-old"), events.filterIsInstance<GeminiLiveEvent.ToolCallCancelled>().single().ids)
-        val usage = events.filterIsInstance<GeminiLiveEvent.UsageReport>().single().usage
+        assertEquals(listOf("fc-old"), events.filterIsInstance<LiveSessionEvent.ToolCallCancelled>().single().ids)
+        val usage = events.filterIsInstance<LiveSessionEvent.UsageReport>().single().usage
         assertEquals(Usage(inputTokens = 320, outputTokens = 100, cachedInputTokens = 120, reasoningTokens = 15), usage)
+        assertFalse(events.any { it is LiveSessionEvent.InputTranscriptCompleted })
+
+        val finishedFrame = """
+            {
+              "serverContent": {
+                "inputTranscription": {"text": "  帮我定明天早上七点闹钟  ", "finished": true}
+              }
+            }
+        """.trimIndent()
+        val finishedEvents = GeminiLiveProtocol.parseServerFrame(finishedFrame)
+        assertTrue(finishedEvents.any { it is LiveSessionEvent.InputTranscriptDelta })
+        assertEquals(
+            "帮我定明天早上七点闹钟",
+            finishedEvents.filterIsInstance<LiveSessionEvent.InputTranscriptCompleted>().single().text,
+        )
+        assertEquals(LiveToolTier.RICH_TOOLS, GeminiLiveProtocol.GEMINI_CAPABILITIES.toolTier)
+        assertTrue(GeminiLiveProtocol.GEMINI_CAPABILITIES.supportsVisualFrames)
+        assertEquals(LiveToolTier.LITE_INTENT, LiveProviderCapabilities.QWEN_OMNI_LITE.toolTier)
+        assertEquals(LiveToolTier.SIDECAR_ONLY, LiveProviderCapabilities.VOLC_SIDECAR_ONLY.toolTier)
+        assertFalse(LiveProviderCapabilities.VOLC_SIDECAR_ONLY.supportsVisualFrames)
     }
 
     @Test
@@ -281,11 +301,11 @@ class GeminiLiveProtocolTest {
             client.connect(baseUrl, "test-key", GeminiLiveSetup()).use { session ->
                 assertTrue("Timed out waiting for burst close handshake", burstFlushedLatch.await(5, TimeUnit.SECONDS))
                 val collected = session.events.toList()
-                val audioCount = collected.count { it is GeminiLiveEvent.AudioDelta }
+                val audioCount = collected.count { it is LiveSessionEvent.AudioDelta }
                 assertEquals(GeminiLiveClient.MAX_QUEUED_AUDIO_CHUNKS, audioCount)
-                assertTrue("ToolCallCancelled must never be dropped", collected.any { it is GeminiLiveEvent.ToolCallCancelled })
-                assertTrue("Transcript must never be dropped", collected.any { it is GeminiLiveEvent.OutputTranscriptDelta && it.text == "你好！" })
-                assertTrue("TurnComplete must arrive intact", collected.any { it is GeminiLiveEvent.TurnComplete })
+                assertTrue("ToolCallCancelled must never be dropped", collected.any { it is LiveSessionEvent.ToolCallCancelled })
+                assertTrue("Transcript must never be dropped", collected.any { it is LiveSessionEvent.OutputTranscriptDelta && it.text == "你好！" })
+                assertTrue("TurnComplete must arrive intact", collected.any { it is LiveSessionEvent.TurnComplete })
             }
         } finally {
             server.shutdown()

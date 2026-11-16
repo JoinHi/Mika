@@ -40,8 +40,6 @@ class FeatureFlags(private val prefs: SharedPreferences) {
         prefs.edit().putBoolean(PERSONAL_START, on).apply()
     }
 
-    fun personalStartChanges(): Flow<Boolean> = booleanChanges(PERSONAL_START, ::personalStart)
-
     /** 还没做过的默认值升级(见 [SPEED_UPGRADES])各做一次;升级之后用户手动关掉就保持关闭。 */
     fun speedFlags(): SpeedFlags {
         val flags = prefs.getString(SPEED_FLAGS, null)?.let { runCatching { SpeedFlags.parse(it) }.getOrNull() } ?: SpeedFlags.OFF

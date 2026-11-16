@@ -1,5 +1,8 @@
 package com.wangzan101.mika.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -206,6 +209,7 @@ fun PersonalAgentScreen(
                 onOpenDrawer = onOpenDrawer,
                 onOpenActivity = { profile = true },
                 onOpenTask = { selectedTask = it.id },
+                audioLevels = runtime.live.audioLevels,
             )
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 PersonalLiveScreenStage(
@@ -215,6 +219,7 @@ fun PersonalAgentScreen(
                     touchOperate = true,
                     reduceMotion = reduceMotion,
                     onWakeRetainedStage = { runtime.live.wakeRetainedStage() },
+                    audioLevels = runtime.live.audioLevels,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -353,7 +358,8 @@ fun PersonalAgentScreen(
     }
     replayTask?.let { id ->
         key(id) {
-            PersonalReplayDialog(runtime, id, id in activeIds || id == PersonalAgent.MAIN_CONVERSATION_ID, openingPreview?.frame) {
+            val isLiveReplay = id in activeIds || (id == PersonalAgent.MAIN_CONVERSATION_ID && liveState.phase.isRunning)
+            PersonalReplayDialog(runtime, id, isLiveReplay, openingPreview?.frame) {
                 replayTask = null
                 openingPreview = null
             }
@@ -361,12 +367,46 @@ fun PersonalAgentScreen(
     }
     val actionErrorText = actionError?.let { personalStopErrorText(context, it) }
     (sendError ?: actionErrorText ?: liveState.errorMessage)?.let { error ->
+        val isMicPermError = sendError == null && actionErrorText == null &&
+            liveState.errorMessage != null && !runtime.live.hasRecordPermission()
+        val dismissAll = {
+            sendError = null
+            runtime.clearError()
+            runtime.live.clearError()
+        }
         AlertDialog(
-            onDismissRequest = { sendError = null; runtime.clearError(); runtime.live.clearError() },
+            onDismissRequest = dismissAll,
             text = { Text(error) },
+            dismissButton = if (isMicPermError) {
+                {
+                    TextButton(onClick = dismissAll) {
+                        Text(stringResource(R.string.personal_ok))
+                    }
+                }
+            } else {
+                null
+            },
             confirmButton = {
-                TextButton(onClick = { sendError = null; runtime.clearError(); runtime.live.clearError() }) {
-                    Text(stringResource(R.string.personal_ok))
+                if (isMicPermError) {
+                    TextButton(
+                        onClick = {
+                            dismissAll()
+                            runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.fromParts("package", context.packageName, null),
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            }
+                        },
+                    ) {
+                        Text(stringResource(R.string.voice_permission_open))
+                    }
+                } else {
+                    TextButton(onClick = dismissAll) {
+                        Text(stringResource(R.string.personal_ok))
+                    }
                 }
             },
         )

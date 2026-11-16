@@ -527,15 +527,25 @@ private fun LiveCapsuleStrip(live: CapsuleLiveUi, actions: CardActions) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(Modifier.size(8.dp).background(c.ok, MikaShapes.Pill))
-        Text(
-            live.label,
-            Modifier.weight(1f),
-            style = Strong.copy(fontSize = 12.5.sp),
-            color = c.ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            Modifier.weight(1f)
+                .clip(MikaShapes.Pill)
+                .clickable(role = Role.Button) {
+                    actions.openMika(com.wangzan101.mika.core.personal.PersonalAgent.MAIN_CONVERSATION_ID)
+                }
+                .padding(vertical = 4.dp, horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(Modifier.size(8.dp).background(c.ok, MikaShapes.Pill))
+            Text(
+                live.label,
+                style = Strong.copy(fontSize = 12.5.sp),
+                color = c.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Box(
             Modifier.size(30.dp).clip(MikaShapes.Pill)
                 .background(if (live.muted) c.warnSoft else c.surface.copy(alpha = 0.72f))

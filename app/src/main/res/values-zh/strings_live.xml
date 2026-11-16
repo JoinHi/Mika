@@ -18,23 +18,13 @@
     <string name="live_action_unmute">开麦</string>
     <string name="live_action_hangup">挂断</string>
     <string name="live_action_share_screen">发当前屏幕</string>
-    <string name="live_action_type_message">切到键盘打字</string>
-    <string name="live_action_back_to_voice">回语音栏</string>
-    <string name="live_action_settings">语音设置</string>
 
     <string name="live_you_prefix">你：%1$s</string>
     <string name="live_mika_prefix">Mika：%1$s</string>
 
-    <string name="live_settings_title">Mika Live 实时语音</string>
-    <string name="live_settings_subtitle">全双工边聊边控手机，由 Gemini Live 原生音频驱动</string>
     <string name="live_settings_provider_label">Gemini 服务商</string>
-    <string name="live_settings_no_gemini_body">尚未配置带 API Key 的 Gemini 服务商。请先在「模型」中添加 Gemini 服务商并填写 API Key。</string>
-    <string name="live_settings_open_models">前往配置模型与 Key</string>
     <string name="live_settings_voice_label">通话音色</string>
     <string name="live_settings_model_label">实时音频模型</string>
-    <string name="live_settings_refresh_models">刷新列表</string>
-    <string name="live_settings_start_now">开始实时通话</string>
-    <string name="live_settings_reconnect_apply">重连并应用新设置</string>
 
     <string name="live_error_mic_permission">Mika Live 需要麦克风权限才能进行实时语音对话。</string>
     <string name="live_error_no_gemini_key">请先在「模型」设置中配置可用的 Gemini API Key。</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">请先切到要查看的应用，并确认已开启无障碍服务与应用共享权限。</string>
     <string name="live_hint_idle_hangup">静默满 3 分钟且无后台任务，Mika Live 已自动挂断。</string>
 
-    <string name="live_hint_direct_elapsed">⚡ 极速直控 · %1$d 步 %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ 后台任务耗时 %1$ss</string>
-
     <string name="live_stage_idle_title">实时虚拟屏待命中</string>
     <string name="live_stage_idle_body">直接对 Mika 说出要打开的应用或操作，实时画面将在此全幅放大呈现</string>
     <string name="live_stage_preparing">正在启动实时虚拟屏…</string>
-    <string name="live_stage_touch_on">可触控</string>
-    <string name="live_stage_touch_off">可缩放</string>
-    <string name="live_stage_view_chat">对话</string>
-    <string name="live_stage_view_screen">实时屏</string>
-    <string name="live_stage_using_web">网页浏览</string>
-    <string name="live_stage_back">虚拟屏返回</string>
     <string name="live_stage_snapshot_wake">画面已休眠 · 轻触恢复操控</string>
 
     <string name="role_live_voice">语音通话模型</string>

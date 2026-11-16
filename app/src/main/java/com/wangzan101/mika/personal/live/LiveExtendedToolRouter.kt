@@ -7,15 +7,18 @@ import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.sandbox.AndroidSandbox
 import com.wangzan101.mika.cap.sandbox.SandboxDirs
 import com.wangzan101.mika.cap.sandbox.SandboxState
+import com.wangzan101.mika.confirm.ConfirmationNotifier
 import com.wangzan101.mika.core.action.ActionExecutor
 import com.wangzan101.mika.core.action.ActionOutcome
 import com.wangzan101.mika.core.action.ActionRecorder
+import com.wangzan101.mika.core.action.ActionRisk
 import com.wangzan101.mika.core.action.ApprovalSettings
 import com.wangzan101.mika.core.action.Origin
 import com.wangzan101.mika.core.assembly.legacyNames
 import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.decision.DecisionModel
 import com.wangzan101.mika.core.gate.ConfirmationGate
+import com.wangzan101.mika.core.gate.ConfirmationRequest
 import com.wangzan101.mika.core.guard.OperationGuards
 import com.wangzan101.mika.core.knowledge.GuideCatalog
 import com.wangzan101.mika.core.live.LiveAsyncEvent
@@ -35,6 +38,7 @@ import com.wangzan101.mika.core.observation.Untrusted
 import com.wangzan101.mika.core.personal.PersonalAgent
 import com.wangzan101.mika.core.record.RunSink
 import com.wangzan101.mika.core.resource.ResourceScope
+import com.wangzan101.mika.core.risk.IrrevAction
 import com.wangzan101.mika.core.run.Attendance
 import com.wangzan101.mika.core.run.RunId
 import com.wangzan101.mika.core.run.RunOrigin
@@ -67,6 +71,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,14 +89,24 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
+internal data class PendingExtendedConfirmation(
+    val id: Int,
+    val request: ConfirmationRequest,
+    val appLabel: String,
+    val matchedText: String,
+    val toolName: String,
+    val toolArgs: JsonObject,
+    val createdElapsedMs: Long = SystemClock.elapsedRealtime(),
+)
+
 /**
  * Mika Live 扩展工具动态路由器：
  * 1. 直连处理高频系统动作 `set_alarm_or_timer`（转调 `phone_set_alarm` / `phone_set_timer` / `phone_show_alarms`，零推理开销）
- *    与只读通知中心 `notices_read`（纯后台 `< 10ms` 读取，不触发虚拟屏）；
- * 2. 处理 `run_extended_tool(intent, details)` 与 `LITE_INTENT` 的 `device_tool(request)`：
- *    通过 Jev [DecisionModel]（上限 240 个工具候选，双 `>= 0.85` 校准门禁；无 Jev 时确定性词法回退）从全量非屏幕工具池
- *    （`schedule_*`、日历、电话、设备文件、记忆/画像、技能、历史记录、自身设置、外部 MCP 插件）中精准筛出 Top 1~3 工具，
- *    再经 Light / Main 模型单步填参后由 [ActionExecutor]（含 [OffScreenGuard] 与审批门禁）安全执行。
+ *    与只读通知中心 `notices_read`（纯后台读取，不触发虚拟屏）；
+ * 2. 处理 `run_extended_tool(intent, details)`：
+ *    通过 Jev [DecisionModel]（上限 240 个工具候选，双 `>= 0.85` 校准门禁；无 Jev 时确定性词法回退）从非屏幕工具池
+ *    （`schedule_task`、日历、`phone_call_*`、设备文件检索、记忆/画像、技能、历史记录、自身设置、外部 MCP 插件）中精准筛出 Top 1~3 工具，
+ *    再经 Light / Main 模型单步填参后由 [ActionExecutor]（含 [OffScreenGuard]、逐轮独立引文溯源与界面确认卡片门禁）安全执行。
  */
 internal class LiveExtendedToolRouter(
     private val app: MikaApp,
@@ -104,19 +121,63 @@ internal class LiveExtendedToolRouter(
     private val asyncJobs = HashSet<Job>()
     private val activeAsyncCount = AtomicInteger(0)
     private val stepSeq = AtomicInteger(0)
+    private val confirmSeq = AtomicInteger(0)
     private var env: OffScreenEnv? = null
+
+    private val _pendingConfirmation = MutableStateFlow<PendingExtendedConfirmation?>(null)
+    val pendingConfirmation: StateFlow<PendingExtendedConfirmation?> = _pendingConfirmation.asStateFlow()
 
     val hasActiveWork: Boolean
         get() = activeAsyncCount.get() > 0
 
+    private data class EnvFlagsSnapshot(
+        val useMemory: Boolean,
+        val taskMemoryEnabled: Boolean,
+        val deviceFiles: Boolean,
+        val selfConfig: Boolean,
+        val selfOperate: Boolean,
+        val proactive: Boolean,
+        val callsEnabled: Boolean,
+        val enabledMcpIds: Set<String>,
+    )
+
     private class OffScreenEnv(
         val key: String,
+        val flags: EnvFlagsSnapshot,
         val resources: ResourceScope,
         val utterances: UserUtterances,
         val dispatcher: ToolDispatcher,
-        val executor: ActionExecutor,
         val mcpConnections: McpConnections?,
         val mcpConnected: Boolean,
+    )
+
+    private fun currentFlagsSnapshot(): EnvFlagsSnapshot {
+        val switches = MemoryRuntime.of(app).settings().switches.value
+        val ff = FeatureFlags.get(app)
+        return EnvFlagsSnapshot(
+            useMemory = switches.useMemory,
+            taskMemoryEnabled = switches.taskMemoryEnabled,
+            deviceFiles = ff.deviceFiles(),
+            selfConfig = ff.selfConfig(),
+            selfOperate = ff.selfOperate(),
+            proactive = ff.proactive(),
+            callsEnabled = app.calls.settings.state.value.enabled,
+            enabledMcpIds = app.mcpServers.servers.value.filter { it.enabled }.mapTo(HashSet()) { it.id },
+        )
+    }
+
+    private fun newScopedExecutor(dispatcher: ToolDispatcher, gate: ConfirmationGate): ActionExecutor = ActionExecutor(
+        tools = dispatcher,
+        guards = OperationGuards(),
+        confirmations = gate,
+        gate = {},
+        recorder = ActionRecorder(RunSink.NONE),
+        offScreen = dispatcher.offScreenGuard(),
+        approvals = ApprovalSettings.ASK,
+        provenance = RunProvenance(RunOrigin.Ui, Attendance.Present),
+        selfPackage = app.packageName,
+        autonomous = false,
+        risks = LiveDirectConfirmation.riskJudge,
     )
 
     suspend fun executeSetAlarmOrTimer(args: JsonObject, callTag: String): JsonObject {
@@ -213,17 +274,10 @@ internal class LiveExtendedToolRouter(
         }
     }
 
-    /**
-     * 供实时语音同步工具通道调用的双路入口（硬实时 `< 750ms` 预算保护）：
-     * - 快路径：750ms 内完成则当轮直接返回真实结果；
-     * - 慢路径：超过 750ms 立即释放同步工具调用并返回 `running_async`，让语音模型先自然开口应答，
-     *   后台完成后经 [LiveTurnCoordinator] 推送 [LiveAsyncEvent.AsyncExtendedToolResult] 播报。
-     */
     suspend fun executeExtendedToolForLive(
         intent: String,
         details: String = "",
         userUtterance: String? = null,
-        recentUserQuotes: List<String> = emptyList(),
         callTag: String = "ext",
     ): JsonObject {
         val cleanIntent = intent.trim()
@@ -236,23 +290,35 @@ internal class LiveExtendedToolRouter(
         }
         activeAsyncCount.incrementAndGet()
         val deferred = scope.async(Dispatchers.IO) {
-            executeExtendedTool(
-                intent = cleanIntent,
-                details = details,
-                userUtterance = userUtterance,
-                recentUserQuotes = recentUserQuotes,
-                callTag = callTag,
-            )
+            try {
+                executeExtendedTool(
+                    intent = cleanIntent,
+                    details = details,
+                    userUtterance = userUtterance,
+                    callTag = callTag,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Extended tool async execution failed", e)
+                buildJsonObject {
+                    put("ok", false)
+                    put("error", "execution_error")
+                    put("message", e.message ?: "扩展工具执行失败。")
+                }
+            }
         }
+        trackAsyncJob(deferred)
+
         val immediate = try {
             withTimeoutOrNull(FAST_SYNC_TIMEOUT_MS) { deferred.await() }
         } catch (e: CancellationException) {
             deferred.cancel()
-            activeAsyncCount.decrementAndGet()
+            activeAsyncCount.updateAndGet { if (it > 0) it - 1 else 0 }
             throw e
         }
         if (immediate != null) {
-            activeAsyncCount.decrementAndGet()
+            activeAsyncCount.updateAndGet { if (it > 0) it - 1 else 0 }
             return immediate
         }
 
@@ -269,13 +335,10 @@ internal class LiveExtendedToolRouter(
                 deferred.cancel()
                 throw e
             } finally {
-                activeAsyncCount.decrementAndGet()
+                activeAsyncCount.updateAndGet { if (it > 0) it - 1 else 0 }
             }
         }
-        synchronized(asyncLock) { asyncJobs += followUpJob }
-        followUpJob.invokeOnCompletion {
-            synchronized(asyncLock) { asyncJobs.remove(followUpJob) }
-        }
+        trackAsyncJob(followUpJob)
 
         return buildJsonObject {
             put("ok", true)
@@ -285,11 +348,17 @@ internal class LiveExtendedToolRouter(
         }
     }
 
+    private fun trackAsyncJob(job: Job) {
+        synchronized(asyncLock) { asyncJobs += job }
+        job.invokeOnCompletion {
+            synchronized(asyncLock) { asyncJobs.remove(job) }
+        }
+    }
+
     suspend fun executeExtendedTool(
         intent: String,
         details: String = "",
         userUtterance: String? = null,
-        recentUserQuotes: List<String> = emptyList(),
         callTag: String = "ext",
     ): JsonObject {
         val startedMs = SystemClock.elapsedRealtime()
@@ -303,18 +372,15 @@ internal class LiveExtendedToolRouter(
         }
 
         val hasEnabledMcp = app.mcpServers.servers.value.any { it.enabled }
-        val currentEnv = mutex.withLock { ensureOffScreenEnvLocked(needMcp = hasEnabledMcp) }
-        recentUserQuotes.forEach { q ->
-            val trimmed = q.trim()
-            if (trimmed.isNotEmpty()) currentEnv.utterances.add(trimmed)
-        }
-        userUtterance?.trim()?.takeIf { it.isNotEmpty() }?.let { currentEnv.utterances.add(it) }
-
         val allSpecsByName = LinkedHashMap<String, ToolSpec>()
-        for (spec in currentEnv.dispatcher.definitions()) {
-            if (isAllowedExtendedTool(spec.name)) {
-                allSpecsByName[spec.name] = spec
+        val currentEnv = mutex.withLock {
+            val e = ensureOffScreenEnvLocked(needMcp = hasEnabledMcp)
+            for (spec in e.dispatcher.definitions()) {
+                if (isAllowedExtendedTool(spec.name)) {
+                    allSpecsByName[spec.name] = spec
+                }
             }
+            e
         }
         if (allSpecsByName.isEmpty()) {
             return buildJsonObject {
@@ -341,6 +407,7 @@ internal class LiveExtendedToolRouter(
         )
         val selectedSpecs = selectedNames.mapNotNull { allSpecsByName[it] }
             .ifEmpty { allSpecsByName.values.take(6) }
+        val allowedSelectedNames = selectedSpecs.mapTo(HashSet()) { it.name }
 
         val modelSession = ModelSession.of(PersonalAgent.MAIN_CONVERSATION_ID)
         val mainModel = app.tasks.modelFactory(app, modelSession)
@@ -377,13 +444,17 @@ internal class LiveExtendedToolRouter(
             throw e
         } catch (e: Exception) {
             val fallbackReply = if (plannerModel !== mainModel && mainModel != null) {
-                runCatching {
+                try {
                     mainModel.complete(
                         sysPrompt,
                         listOf(Message(Role.User, listOf(Part.Text(userMsg)), Author.User)),
                         selectedSpecs,
                     )
-                }.getOrNull()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Exception) {
+                    null
+                }
             } else {
                 null
             }
@@ -415,14 +486,37 @@ internal class LiveExtendedToolRouter(
         val results = ArrayList<JsonObject>(toolCalls.size)
         var allOk = true
         for ((idx, tc) in toolCalls.withIndex()) {
+            if (tc.name !in allowedSelectedNames || !isAllowedExtendedTool(tc.name)) {
+                allOk = false
+                results += buildJsonObject {
+                    put("tool", tc.name)
+                    put(
+                        "result",
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", "tool_not_allowed")
+                        },
+                    )
+                }
+                continue
+            }
             val parsedArgs = runCatching {
                 Json.parseToJsonElement(tc.argsJson) as? JsonObject
             }.getOrNull() ?: JsonObject(emptyMap())
-            val single = dispatchSingleSelectedTool(currentEnv, tc.copy(id = "ext_${callTag}_${idx + 1}"), parsedArgs, callTag)
+            val single = dispatchSingleSelectedTool(
+                currentEnv = currentEnv,
+                call = tc.copy(id = "ext_${callTag}_${idx + 1}"),
+                parsedArgs = parsedArgs,
+                userUtterance = userUtterance,
+                callTag = callTag,
+            )
             if (single["ok"] != JsonPrimitive(true)) allOk = false
             results += buildJsonObject {
                 put("tool", tc.name)
                 put("result", single)
+            }
+            if (single["stop_reason"] == JsonPrimitive("awaiting_ui_confirmation")) {
+                break
             }
         }
 
@@ -451,8 +545,27 @@ internal class LiveExtendedToolRouter(
         currentEnv: OffScreenEnv,
         call: Part.ToolCall,
         parsedArgs: JsonObject,
+        userUtterance: String?,
         callTag: String,
     ): JsonObject {
+        val confirmationReq = buildOffScreenConfirmationIfNeeded(currentEnv, call.name, parsedArgs)
+        if (confirmationReq != null) {
+            val card = PendingExtendedConfirmation(
+                id = confirmSeq.incrementAndGet(),
+                request = confirmationReq,
+                appLabel = ConfirmationNotifier.appLabel(app, confirmationReq.app),
+                matchedText = confirmationReq.target.ifBlank { call.name },
+                toolName = call.name,
+                toolArgs = parsedArgs,
+            )
+            _pendingConfirmation.value = card
+            return buildJsonObject {
+                put("ok", false)
+                put("stop_reason", "awaiting_ui_confirmation")
+                put("message", "已在应用界面弹出确认卡片（${card.matchedText}）。请简短提醒机主在屏幕确认卡片上点按「同意」或「不同意」；严禁索要口头确认，也不要重复调用工具重试。")
+            }
+        }
+
         if (call.name in PHONE_BRIDGED_EXTENDED_TOOLS) {
             val silent = call.name in SILENT_PHONE_SYSTEM_TOOLS
             if (!silent) onRevealStage()
@@ -468,26 +581,37 @@ internal class LiveExtendedToolRouter(
             return res.payload
         }
 
-        val outcome = try {
-            currentEnv.executor.run(call, Origin.Batch(stepSeq.incrementAndGet()))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Off-screen extended tool execution failed: ${call.name}", e)
+        val outcome = mutex.withLock {
+            currentEnv.utterances.clear()
+            userUtterance?.trim()?.takeIf { it.isNotEmpty() }?.let { currentEnv.utterances.add(it) }
+            val gate = ConfirmationGate()
+            val executor = newScopedExecutor(currentEnv.dispatcher, gate)
+            try {
+                executor.run(call, Origin.Batch(stepSeq.incrementAndGet()))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Off-screen extended tool execution failed: ${call.name}", e)
+                return@withLock null to (e.message ?: "工具执行异常。")
+            } to null
+        }
+
+        val (actOutcome, errMsg) = outcome
+        if (actOutcome == null) {
             return buildJsonObject {
                 put("ok", false)
                 put("error", "execution_error")
-                put("message", e.message ?: "工具执行异常。")
+                put("message", errMsg ?: "工具执行异常。")
             }
         }
 
-        return when (outcome) {
-            is ActionOutcome.Ran -> outcome.exec.content
+        return when (actOutcome) {
+            is ActionOutcome.Ran -> actOutcome.exec.content
             is ActionOutcome.Refused -> buildJsonObject {
                 put("ok", false)
-                put("stop_reason", outcome.code)
-                val msg = (outcome.content["message"] as? JsonPrimitive)?.contentOrNull
-                    ?: "该操作触发安全审批限制（${outcome.code}），无法在语音后台自动放行；如需执行请在聊天界面发起或由机主手动操作。"
+                put("stop_reason", actOutcome.code)
+                val msg = (actOutcome.content["message"] as? JsonPrimitive)?.contentOrNull
+                    ?: "该操作触发安全审批限制（${actOutcome.code}），无法自动放行。"
                 put("message", msg)
             }
             is ActionOutcome.Cancelled -> buildJsonObject {
@@ -497,9 +621,97 @@ internal class LiveExtendedToolRouter(
         }
     }
 
+    private fun buildOffScreenConfirmationIfNeeded(
+        currentEnv: OffScreenEnv,
+        toolName: String,
+        parsedArgs: JsonObject,
+    ): ConfirmationRequest? {
+        if (toolName in HIGH_IMPACT_CONFIRM_TOOLS) {
+            val summary = parsedArgs.entries.joinToString(", ") { (k, v) -> "$k=$v" }.take(160).ifBlank { toolName }
+            return ConfirmationRequest(
+                action = IrrevAction.other,
+                target = toolName,
+                content = summary,
+                amount = null,
+                app = app.packageName,
+            )
+        }
+        val declared = runCatching { currentEnv.dispatcher.approvalRisk(toolName, parsedArgs) }.getOrNull() ?: return null
+        if (declared.ask != null) return declared.ask
+        if (declared.level == ActionRisk.Irreversible) {
+            val summary = parsedArgs.entries.joinToString(", ") { (k, v) -> "$k=$v" }.take(160).ifBlank { toolName }
+            return ConfirmationRequest(
+                action = IrrevAction.other,
+                target = toolName,
+                content = summary,
+                amount = null,
+                app = app.packageName,
+            )
+        }
+        return null
+    }
+
+    suspend fun approvePendingConfirmation(id: Int): Pair<Boolean, JsonObject>? {
+        val pending = _pendingConfirmation.value?.takeIf { it.id == id } ?: return null
+        _pendingConfirmation.value = null
+        if (pending.toolName in PHONE_BRIDGED_EXTENDED_TOOLS) {
+            val silent = pending.toolName in SILENT_PHONE_SYSTEM_TOOLS
+            if (!silent) onRevealStage()
+            val res = directPhone.executePhoneTool(
+                toolName = pending.toolName,
+                args = pending.toolArgs,
+                callTag = "ext_confirm_${pending.id}",
+                revealStageOnlyIfShowing = silent,
+            )
+            return res.ok to res.payload
+        }
+        val needMcp = pending.toolName.startsWith("mcp_")
+        return mutex.withLock {
+            val currentEnv = ensureOffScreenEnvLocked(needMcp = needMcp)
+            currentEnv.utterances.clear()
+            val gate = ConfirmationGate()
+            val step = stepSeq.incrementAndGet()
+            LiveDirectConfirmation.grantOnce(gate, pending.request, step)
+            val executor = newScopedExecutor(currentEnv.dispatcher, gate)
+            val call = Part.ToolCall("ext_confirm_${pending.id}", pending.toolName, pending.toolArgs.toString())
+            val outcome = try {
+                executor.run(call, Origin.Model(step))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@withLock false to buildJsonObject {
+                    put("ok", false)
+                    put("error", "execution_error")
+                    put("message", e.message ?: "确认执行异常。")
+                }
+            } finally {
+                gate.reset()
+            }
+            when (outcome) {
+                is ActionOutcome.Ran -> (outcome.exec.content["ok"] != JsonPrimitive(false)) to outcome.exec.content
+                is ActionOutcome.Refused -> false to buildJsonObject {
+                    put("ok", false)
+                    put("stop_reason", outcome.code)
+                    put("message", (outcome.content["message"] as? JsonPrimitive)?.contentOrNull ?: outcome.code)
+                }
+                is ActionOutcome.Cancelled -> false to buildJsonObject {
+                    put("ok", false)
+                    put("error", "cancelled")
+                }
+            }
+        }
+    }
+
+    fun declinePendingConfirmation(id: Int): PendingExtendedConfirmation? {
+        val cur = _pendingConfirmation.value?.takeIf { it.id == id } ?: return null
+        _pendingConfirmation.value = null
+        return cur
+    }
+
     private suspend fun ensureOffScreenEnvLocked(needMcp: Boolean): OffScreenEnv {
+        val currentFlags = currentFlagsSnapshot()
         val existing = env
-        if (existing != null && (!needMcp || existing.mcpConnected)) {
+        if (existing != null && existing.flags == currentFlags && (!needMcp || existing.mcpConnected)) {
             return existing
         }
         existing?.let { closeEnvLocked(it) }
@@ -508,10 +720,9 @@ internal class LiveExtendedToolRouter(
         val resources = ResourceScope()
         try {
             val memoryRuntime = MemoryRuntime.of(app)
-            val switches = memoryRuntime.settings().switches.value
-            val memory = if (switches.useMemory) withContext(Dispatchers.IO) { memoryRuntime.store() } else null
+            val memory = if (currentFlags.useMemory) withContext(Dispatchers.IO) { memoryRuntime.store() } else null
             val profile = if (memory != null) memoryRuntime.profile() else null
-            val taskMemory = if (switches.taskMemoryEnabled) withContext(Dispatchers.IO) { memoryRuntime.taskMemory() } else null
+            val taskMemory = if (currentFlags.taskMemoryEnabled) withContext(Dispatchers.IO) { memoryRuntime.taskMemory() } else null
             val utterances = UserUtterances()
             val legacy = legacyNames()
             val catalog = GuideCatalog.withPersonal(
@@ -521,7 +732,7 @@ internal class LiveExtendedToolRouter(
                 plugins = app.plugins.skillsSnapshot(),
             )
             val conversationId = PersonalAgent.MAIN_CONVERSATION_ID
-            val mcpConn: McpConnections? = if (needMcp && app.mcpServers.servers.value.any { it.enabled }) {
+            val mcpConn: McpConnections? = if (needMcp && currentFlags.enabledMcpIds.isNotEmpty()) {
                 withContext(Dispatchers.IO) {
                     runCatching {
                         app.mcpServers.connectionsFor(
@@ -544,7 +755,7 @@ internal class LiveExtendedToolRouter(
             val selfPort = AndroidSelfPort(app, conversationId, key)
             val phoneServices = PhoneServices.of(app)
             val sandbox = AndroidSandbox(app, SandboxState.get(app))
-            val deviceFiles = if (FeatureFlags.get(app).deviceFiles()) {
+            val deviceFiles = if (currentFlags.deviceFiles) {
                 AndroidDeviceFiles(
                     phoneServices.hub,
                     SandboxDirs(app),
@@ -570,33 +781,20 @@ internal class LiveExtendedToolRouter(
                 scheduleTrigger = { trigger -> TriggerRuntime.schedule(app, trigger) },
                 scheduleAdmin = LocalScheduleAdmin(app),
                 personalSkills = memoryRuntime.skills(),
-                selfConfig = if (FeatureFlags.get(app).selfConfig()) SelfConfigImpl(FeatureFlags.get(app)) else null,
+                selfConfig = if (currentFlags.selfConfig) SelfConfigImpl(FeatureFlags.get(app)) else null,
                 runRecords = RunStore(app).reader(),
-                phoneCalls = app.callPort.takeIf { app.calls.settings.state.value.enabled },
-                notices = if (FeatureFlags.get(app).proactive()) app.proactive.noticeSource() else null,
+                phoneCalls = app.callPort.takeIf { currentFlags.callsEnabled },
+                notices = if (currentFlags.proactive) app.proactive.noticeSource() else null,
                 deviceFiles = deviceFiles,
                 self = selfPort,
-                selfOperate = selfPort.takeIf { FeatureFlags.get(app).selfOperate() },
-            )
-            val executor = ActionExecutor(
-                tools = dispatcher,
-                guards = OperationGuards(),
-                confirmations = ConfirmationGate(),
-                gate = {},
-                recorder = ActionRecorder(RunSink.NONE),
-                offScreen = dispatcher.offScreenGuard(),
-                approvals = ApprovalSettings.ASK,
-                provenance = RunProvenance(RunOrigin.Ui, Attendance.Present),
-                selfPackage = app.packageName,
-                autonomous = false,
-                risks = LiveDirectConfirmation.riskJudge,
+                selfOperate = selfPort.takeIf { currentFlags.selfOperate },
             )
             val created = OffScreenEnv(
                 key = key,
+                flags = currentFlags,
                 resources = resources,
                 utterances = utterances,
                 dispatcher = dispatcher,
-                executor = executor,
                 mcpConnections = mcpConn,
                 mcpConnected = needMcp,
             )
@@ -611,6 +809,7 @@ internal class LiveExtendedToolRouter(
     }
 
     fun cancelAll() {
+        _pendingConfirmation.value = null
         val jobs = synchronized(asyncLock) {
             val copy = asyncJobs.toList()
             asyncJobs.clear()
@@ -656,6 +855,11 @@ internal class LiveExtendedToolRouter(
             "phone_set_timer",
         )
 
+        private val HIGH_IMPACT_CONFIRM_TOOLS = setOf(
+            "settings_set",
+            "phone_calendar_bulk_insert",
+        )
+
         private val EXCLUDED_META_TOOLS = setOf(
             "ask_user",
             "request_confirmation",
@@ -663,11 +867,17 @@ internal class LiveExtendedToolRouter(
             "end_not_done",
             "do_steps",
             "web_search",
+            "copy_device_file",
+            "mika_open_in_browser",
+            "mika_search_in_browser",
+            "mika_login_site",
+            "mika_confirm_login",
         )
 
         internal fun isAllowedExtendedTool(name: String): Boolean {
             if (name in EXCLUDED_META_TOOLS) return false
             if (name in PHONE_BRIDGED_EXTENDED_TOOLS) return true
+            if (name.startsWith("phone_call_")) return true
             if (name.startsWith("phone_")) return false
             if (name.startsWith("web_")) return false
             if (name.startsWith("root_")) return false
@@ -688,19 +898,19 @@ internal class LiveExtendedToolRouter(
             elements = emptyList(),
             width = 1080,
             height = 2400,
-            hasWindow = false,
         )
 
+        override suspend fun peek(): ScreenSnapshot = snapshot()
         override suspend fun screenshotPng(): ByteArray? = null
-        override suspend fun tapRef(ref: String, snapshotId: String): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun tapXY(x: Int, y: Int): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun typeText(ref: String?, snapshotId: String?, text: String): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun clearText(ref: String?, snapshotId: String?): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun scroll(ref: String?, snapshotId: String?, down: Boolean): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun back(): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun pressKey(keyCode: Int): ActionResult = ActionResult.Failed("off_screen_only")
-        override suspend fun openApp(packageName: String, cold: Boolean): ActionResult = ActionResult.Failed("off_screen_only")
+        override suspend fun tapRef(ref: String, snapshotId: String): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun tapXY(x: Int, y: Int): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun typeText(ref: String?, snapshotId: String?, text: String): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun clearText(ref: String?, snapshotId: String?): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun scroll(ref: String?, snapshotId: String?, down: Boolean): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun back(): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun pressKey(keyCode: Int): ActionResult = ActionResult.Failed("offscreen_only")
+        override suspend fun openApp(packageName: String, cold: Boolean): ActionResult = ActionResult.Failed("offscreen_only")
         override suspend fun waitStable(timeoutMs: Long): Boolean = true
         override suspend fun listApps(): List<Pair<String, String>> = emptyList()
     }

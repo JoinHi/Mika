@@ -31,6 +31,9 @@ import androidx.compose.ui.unit.sp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.core.live.GeminiLiveModels
 import com.wangzan101.mika.core.live.GeminiLiveProtocol
+import com.wangzan101.mika.core.model.ApiKeyText
+import com.wangzan101.mika.core.model.ListFailure
+import com.wangzan101.mika.core.model.ModelError
 import com.wangzan101.mika.core.model.ModelListResult
 import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.personal.live.PersonalLiveRuntime
@@ -51,6 +54,7 @@ import com.wangzan101.mika.ui.theme.MikaIcons
 import com.wangzan101.mika.ui.theme.MikaShapes
 import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.MikaType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,6 +95,7 @@ fun LiveVoiceModelScreen(
 
     var baseUrl by rememberSaveable { mutableStateOf(DEFAULT_GEMINI_BASE_URL) }
     var apiKey by remember { mutableStateOf("") }
+    var keyNotice by remember { mutableStateOf(ApiKeyText.Notice.None) }
     var showKey by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
     var connectError by remember { mutableStateOf<String?>(null) }
@@ -128,7 +133,12 @@ fun LiveVoiceModelScreen(
         !baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://") -> tr(R.string.model_url_scheme)
         else -> null
     }
-    val canConnect = urlProblem == null && apiKey.isNotBlank() && !connecting
+    val keyRejected = keyNotice == ApiKeyText.Notice.IllegalCharacters
+    val canConnect = urlProblem == null &&
+        apiKey.isNotBlank() &&
+        !keyRejected &&
+        ApiKeyText.isHeaderLegal(apiKey.trim()) &&
+        !connecting
 
     fun applyImmediateIfConfigured(
         nextProviderId: String = chosenProvider?.id ?: cfg.providerId,
@@ -187,6 +197,7 @@ fun LiveVoiceModelScreen(
                 }
                 live.restartIfActive()
                 apiKey = ""
+                keyNotice = ApiKeyText.Notice.None
                 connecting = false
                 if (addingNewProvider) {
                     addingNewProvider = false
@@ -197,7 +208,15 @@ fun LiveVoiceModelScreen(
             }
 
             val (listRes, bidiRes) = withContext(Dispatchers.IO) {
-                val general = store.listModels(ProviderConfig.Kind.Gemini, cleanUrl, cleanKey, null)
+                val general = try {
+                    store.listModels(ProviderConfig.Kind.Gemini, cleanUrl, cleanKey, null)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: ModelError.IllegalHeader) {
+                    ModelListResult.Failed(ListFailure.IllegalKey)
+                } catch (e: Exception) {
+                    ModelListResult.Failed(ListFailure.of(e), e.message.orEmpty())
+                }
                 val bidi = GeminiLiveModels.listBidiModels(cleanUrl, cleanKey, ProviderStore.modelHttp)
                 general to bidi
             }
@@ -205,7 +224,11 @@ fun LiveVoiceModelScreen(
             val generalModels = (listRes as? ModelListResult.Ok)?.models.orEmpty()
             if (bidiRes.isFailure && listRes is ModelListResult.Failed) {
                 connecting = false
-                connectError = listRes.message.ifBlank { bidiRes.exceptionOrNull()?.message ?: tr(R.string.live_error_connect_failed) }
+                val bidiErr = when (val ex = bidiRes.exceptionOrNull()) {
+                    is ModelError.IllegalHeader -> ModelSetupCopy.KEY_ILLEGAL
+                    else -> ex?.message
+                }
+                connectError = listRes.message.ifBlank { bidiErr ?: tr(R.string.live_error_connect_failed) }
                 return@launch
             }
 
@@ -244,6 +267,7 @@ fun LiveVoiceModelScreen(
             }
             live.restartIfActive()
             apiKey = ""
+            keyNotice = ApiKeyText.Notice.None
             connecting = false
             if (addingNewProvider) {
                 addingNewProvider = false
@@ -290,11 +314,24 @@ fun LiveVoiceModelScreen(
                 InputRow(
                     ModelSetupCopy.API_KEY,
                     apiKey,
-                    { apiKey = it; connectError = null },
+                    { raw ->
+                        val accepted = ApiKeyText.accept(raw)
+                        apiKey = accepted.text
+                        keyNotice = accepted.notice
+                        connectError = null
+                    },
                     ModelSetupCopy.KEY_HINT,
                     keyboard = KeyboardType.Password,
                     secret = !showKey,
                     modifier = Modifier.testTag("live-voice-api-key"),
+                    onClear = {
+                        val cleared = ApiKeyText.accept("")
+                        apiKey = cleared.text
+                        keyNotice = cleared.notice
+                        connectError = null
+                    },
+                    clearDescription = stringResource(R.string.model_key_clear),
+                    clearModifier = Modifier.testTag("live-voice-api-key-clear"),
                 ) {
                     Text(
                         if (showKey) stringResource(R.string.hide) else stringResource(R.string.show),
@@ -304,6 +341,7 @@ fun LiveVoiceModelScreen(
                     )
                 }
             }
+            ApiKeyNoticeNote(keyNotice, tag = "live-voice-key-notice")
             urlProblem?.takeIf { baseUrl.isNotBlank() }?.let {
                 FooterNote(it, color = c.bad)
             }
@@ -482,6 +520,25 @@ fun LiveVoiceModelScreen(
                     size = ButtonSize.Large,
                 )
             } else {
+                val pendingManual = manualModel.trim()
+                if (pendingManual.isNotBlank() && pendingManual != selectedModel) {
+                    MikaButton(
+                        ModelsCopy.SAVE,
+                        onClick = {
+                            selectedModel = pendingManual
+                            manualModel = ""
+                            applyImmediateIfConfigured(
+                                nextProviderId = chosenProvider.id,
+                                nextModel = pendingManual,
+                                nextVoice = selectedVoice,
+                                forceEnable = true,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("live-voice-save-manual"),
+                        kind = ButtonKind.Primary,
+                        size = ButtonSize.Medium,
+                    )
+                }
                 Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
                     Text(
                         tr(R.string.live_voice_disable),

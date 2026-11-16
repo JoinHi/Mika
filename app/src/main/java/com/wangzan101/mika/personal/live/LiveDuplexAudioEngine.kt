@@ -1,7 +1,9 @@
 package com.wangzan101.mika.personal.live
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -17,6 +19,8 @@ import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import androidx.core.content.ContextCompat
 import com.wangzan101.mika.core.live.GeminiLiveProtocol
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,6 +52,7 @@ internal interface LiveAudioController {
     fun start(initialMuted: Boolean = false): Boolean
     fun enqueueOutputPcm24k(pcm24kLe: ByteArray)
     fun clearPlayback()
+    fun pauseForPreemption() = stop()
     fun stop()
 }
 
@@ -106,11 +111,7 @@ class LiveDuplexAudioEngine(
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            -> {
-                if (isSystemInCallMode()) {
-                    onAudioFocusPreempted(true)
-                }
-            }
+            -> onAudioFocusPreempted(true)
             AudioManager.AUDIOFOCUS_GAIN -> onAudioFocusPreempted(false)
         }
     }
@@ -125,10 +126,15 @@ class LiveDuplexAudioEngine(
         if (value) _inputLevel.value = 0f
     }
 
-    @SuppressLint("MissingPermission")
     @Synchronized
     override fun start(initialMuted: Boolean): Boolean {
         if (running.get()) return true
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        if (isSystemInCallMode()) {
+            return false
+        }
         muted.set(initialMuted)
 
         val attrs = AudioAttributes.Builder()
@@ -136,13 +142,17 @@ class LiveDuplexAudioEngine(
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
 
-        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        val existingReq = focusRequest
+        val req = existingReq ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
             .setAudioAttributes(attrs)
             .setAcceptsDelayedFocusGain(true)
             .setOnAudioFocusChangeListener(focusListener, mainHandler)
             .build()
         val focusRes = audioManager.requestAudioFocus(req)
-        if (focusRes == AudioManager.AUDIOFOCUS_REQUEST_FAILED) {
+        if (focusRes != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            if (existingReq == null) {
+                runCatching { audioManager.abandonAudioFocusRequest(req) }
+            }
             return false
         }
         focusRequest = req
@@ -151,6 +161,7 @@ class LiveDuplexAudioEngine(
         @Suppress("DEPRECATION")
         previousSpeakerphone = audioManager.isSpeakerphoneOn
         runCatching { audioManager.mode = AudioManager.MODE_IN_COMMUNICATION }
+            .onFailure { Log.w(TAG, "Failed to enter MODE_IN_COMMUNICATION", it) }
         audioManager.registerAudioDeviceCallback(deviceCallback, mainHandler)
         updateCommunicationRoute()
 
@@ -160,26 +171,19 @@ class LiveDuplexAudioEngine(
             AudioFormat.ENCODING_PCM_16BIT,
         )
         if (minRecBuf <= 0) {
-            cleanupAudioSystem()
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
 
         val frameShorts = GeminiLiveProtocol.INPUT_SAMPLE_RATE / 25 // 40ms = 640 samples = 1280 bytes
-        val rec = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                GeminiLiveProtocol.INPUT_SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minRecBuf * 2, frameShorts * 2 * 6),
-            )
-        } catch (_: Throwable) {
-            cleanupAudioSystem()
+        val rec = createVoiceCommunicationRecord(minRecBuf, frameShorts)
+        if (rec == null) {
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             runCatching { rec.release() }
-            cleanupAudioSystem()
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
 
@@ -197,7 +201,7 @@ class LiveDuplexAudioEngine(
             releaseEffects(effects)
             clearEffectsRefs()
             runCatching { rec.release() }
-            cleanupAudioSystem()
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
 
@@ -219,7 +223,7 @@ class LiveDuplexAudioEngine(
             releaseEffects(effects)
             clearEffectsRefs()
             runCatching { rec.release() }
-            cleanupAudioSystem()
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
 
@@ -231,7 +235,7 @@ class LiveDuplexAudioEngine(
             clearEffectsRefs()
             runCatching { rec.release() }
             runCatching { trk.release() }
-            cleanupAudioSystem()
+            cleanupAudioSystem(abandonFocus = true)
             return false
         }
 
@@ -268,9 +272,37 @@ class LiveDuplexAudioEngine(
         }
     }
 
+    @SuppressLint("MissingPermission")
+    private fun createVoiceCommunicationRecord(minRecBuf: Int, frameShorts: Int): AudioRecord? = try {
+        AudioRecord(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            GeminiLiveProtocol.INPUT_SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(minRecBuf * 2, frameShorts * 2 * 6),
+        )
+    } catch (_: Throwable) {
+        null
+    }
+
+    @Synchronized
+    override fun pauseForPreemption() {
+        stopInternal(abandonFocus = false)
+    }
+
     @Synchronized
     override fun stop() {
-        if (!running.compareAndSet(true, false)) return
+        stopInternal(abandonFocus = true)
+    }
+
+    private fun stopInternal(abandonFocus: Boolean) {
+        if (!running.compareAndSet(true, false)) {
+            if (abandonFocus) {
+                focusRequest?.let { req -> runCatching { audioManager.abandonAudioFocusRequest(req) } }
+                focusRequest = null
+            }
+            return
+        }
         playbackQueue.clear()
         _inputLevel.value = 0f
         _outputLevel.value = 0f
@@ -302,7 +334,7 @@ class LiveDuplexAudioEngine(
         captureJob = null
         playbackJob = null
 
-        cleanupAudioSystem()
+        cleanupAudioSystem(abandonFocus = abandonFocus)
     }
 
     private fun captureLoop(
@@ -437,35 +469,63 @@ class LiveDuplexAudioEngine(
 
     private fun updateCommunicationRoute() {
         runCatching {
-            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            val externalHeadset = devices.firstOrNull {
-                it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                    it.type == AudioDeviceInfo.TYPE_USB_HEADSET
-            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val target = externalHeadset ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                if (target != null) audioManager.setCommunicationDevice(target)
+                val commDevices = audioManager.availableCommunicationDevices
+                val externalHeadset = commDevices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                        it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                }
+                val target = externalHeadset ?: commDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (target != null) {
+                    audioManager.setCommunicationDevice(target)
+                }
             } else {
+                val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                val hasBtSco = devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+                val hasExternal = hasBtSco || devices.any {
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                        it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                }
                 @Suppress("DEPRECATION")
-                audioManager.isSpeakerphoneOn = (externalHeadset == null)
+                if (hasBtSco) {
+                    audioManager.isSpeakerphoneOn = false
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                } else {
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.stopBluetoothSco()
+                    audioManager.isSpeakerphoneOn = !hasExternal
+                }
             }
+        }.onFailure { t ->
+            Log.w(TAG, "Failed to update communication route", t)
         }
     }
 
-    private fun cleanupAudioSystem() {
+    private fun cleanupAudioSystem(abandonFocus: Boolean) {
         runCatching { audioManager.unregisterAudioDeviceCallback(deviceCallback) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching { audioManager.clearCommunicationDevice() }
         } else {
             @Suppress("DEPRECATION")
-            runCatching { audioManager.isSpeakerphoneOn = previousSpeakerphone }
+            runCatching {
+                audioManager.isBluetoothScoOn = false
+                audioManager.stopBluetoothSco()
+                audioManager.isSpeakerphoneOn = previousSpeakerphone
+            }
         }
-        runCatching { audioManager.mode = previousAudioMode }
-        focusRequest?.let { req -> runCatching { audioManager.abandonAudioFocusRequest(req) } }
-        focusRequest = null
+        if (!isSystemInCallMode()) {
+            runCatching { audioManager.mode = previousAudioMode }
+        }
+        if (abandonFocus) {
+            focusRequest?.let { req -> runCatching { audioManager.abandonAudioFocusRequest(req) } }
+            focusRequest = null
+        }
     }
 
     private class TrackHandle(val track: AudioTrack) {
@@ -474,6 +534,7 @@ class LiveDuplexAudioEngine(
     }
 
     companion object {
+        private const val TAG = "LiveAudioEngine"
         /** Cap buffered 24kHz PCM16 audio to ~30s (1.44 MB) so a stalled output device can never OOM. */
         internal const val MAX_QUEUED_PLAYBACK_BYTES = GeminiLiveProtocol.OUTPUT_SAMPLE_RATE * 2 * 30
     }
@@ -503,12 +564,13 @@ internal class PlaybackChunkQueue(
         get() = synchronized(lock) { queue.isNotEmpty() }
 
     fun offer(pcm: ByteArray): Boolean {
-        if (pcm.isEmpty()) return false
+        val evenSize = pcm.size and 1.inv()
+        if (evenSize <= 0) return false
         val safeCap = maxOf(2, maxBytes and 1.inv())
-        val clipped = if (pcm.size > safeCap) {
-            pcm.copyOfRange(pcm.size - safeCap, pcm.size)
-        } else {
-            pcm
+        val clipped = when {
+            evenSize > safeCap -> pcm.copyOfRange(evenSize - safeCap, evenSize)
+            evenSize < pcm.size -> pcm.copyOfRange(0, evenSize)
+            else -> pcm
         }
         synchronized(lock) {
             while (queue.isNotEmpty() && bytesQueued + clipped.size > safeCap) {

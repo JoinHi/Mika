@@ -19,13 +19,20 @@ import kotlin.math.abs
 
 /**
  * Live 语音直控模式的单步敏感动作拦截与确认单构建规则：
- * - **逢敏感必确认，单次有效，不绑定脆弱上下文**：所有非支付类敏感动作（`send`、`delete`、`submit`、`order`、`other`）
- *   每次触发均必须弹出界面确认卡片，机主点击「同意」仅放行当次这一个动作步骤；即便连续第二次点击完全相同的按钮，也必须再次确认；
+ * - **逢敏感必确认，单次有效，实时核验上下文（防 TOCTOU）**：所有非支付类敏感动作（`send`、`delete`、`submit`、`order`、`other`）
+ *   每次触发均必须弹出界面确认卡片；机主点击「同意」时按实时重读屏幕逐项比对应用包名、页面目标、草稿内容与应付金额（缺省字段允许一致为空，
+ *   但一旦确认期间切走应用、切换聊天对象、修改草稿、价格变动或原按钮消失被遮挡，立即以 `confirmation_mismatch` 拒绝执行）；
  * - **拒绝不拉黑**：机主点击「不同意」仅取消当前这一次操作，不污染后续同应用同类操作的再次确认；
  * - **支付绝对手点**：支付动作（[IrrevAction.pay]）一律返回 `null`，从不生成代点确认卡，必须由机主亲手在实时虚拟屏上点击完成。
  */
 object LiveDirectConfirmation {
-    const val GRANT_SENTINEL = "*"
+    private val CHANGED_SCREEN_SENTINEL = ConfirmationRequest(
+        action = IrrevAction.other,
+        target = "__target_disappeared__",
+        content = "__target_disappeared__",
+        amount = null,
+        app = "__target_disappeared__",
+    )
 
     private const val MAX_TARGET_LEN = 40
     private const val MAX_CONTENT_LEN = 200
@@ -37,26 +44,26 @@ object LiveDirectConfirmation {
     private val DISCOUNTS = listOf("优惠", "减", "抵扣", "运费", "券", "红包", "已省")
 
     /**
-     * 生成与单步动作类别严格对应的内部一次性放行凭据（经 [ConfirmationGate.permitsExactly] 核销后立即作废）。
+     * 生成与当前屏幕上下文严格绑定的一次性放行凭据（绑定 `action`、`app`、`target`、屏幕草稿 `content` 与应付 `amount`）。
      * 支付动作（[IrrevAction.pay]）永远返回 `null`，绝不允许自动放行。
      */
-    fun grantToken(action: IrrevAction): ConfirmationRequest? {
-        if (action == IrrevAction.pay) return null
-        return ConfirmationRequest(
-            action = action,
-            target = GRANT_SENTINEL,
-            content = action.name,
-            amount = null,
-            app = GRANT_SENTINEL,
-        )
-    }
+    fun buildGateToken(
+        hit: Irreversible,
+        screen: ScreenSnapshot?,
+        fallbackApp: String? = null,
+    ): ConfirmationRequest? = buildRequest(
+        hit = hit,
+        screen = screen,
+        typingText = null,
+        fallbackApp = fallbackApp,
+    )
 
     /**
-     * 在机主于确认卡片点击「同意」后，向 [gate] 写入仅对当前单步（[step]）生效的一次性放行凭据。
+     * 在机主于确认卡片点击「同意」后，向 [gate] 写入仅对当前单步（[step]）生效且绑定上下文的一次性放行凭据。
      * 支付动作（[IrrevAction.pay]）始终返回 `false`。
      */
-    fun grantOnce(gate: ConfirmationGate, action: IrrevAction, step: Int): Boolean {
-        val token = grantToken(action) ?: return false
+    fun grantOnce(gate: ConfirmationGate, token: ConfirmationRequest, step: Int): Boolean {
+        if (token.action == IrrevAction.pay) return false
         gate.reset()
         if (gate.declare(token, token.app) != DeclareResult.Pending) return false
         gate.decide(ConfirmChoice.Once, step)
@@ -65,16 +72,34 @@ object LiveDirectConfirmation {
 
     /**
      * 专供 Live 语音直控 `ActionExecutor` 使用的风险判定器（不影响普通聊天 `TaskRun` 默认策略）：
-     * 凡命中 `Irreversible` 的非支付敏感动作一律要求当次确认，支付动作保持 `payment = true, ask = null` 拒绝代点。
+     * - 凡命中 `Irreversible` 的非支付敏感动作，按实时屏幕生成绑定 `app/target/content/amount` 的确认请求；
+     * - 支付动作保持 `payment = true, ask = null` 拒绝代点；
+     * - 若当前存在待核销的单次授权（`gate.granted != null`）但新读屏幕已不再命中原不可逆控件（`hit == null`，如原按钮被遮罩/无标签弹窗覆盖），
+     *   强制触发 `confirmation_mismatch` 拦截盲点。
      */
-    val riskJudge: RiskJudge = RiskJudge { verb, hit, screen ->
+    fun riskJudge(
+        gate: ConfirmationGate? = null,
+        fallbackAppProvider: () -> String? = { null },
+    ): RiskJudge = RiskJudge { verb, hit, screen ->
         val base = ClassifiedRisk.assess(verb, hit, screen)
         when {
-            hit == null -> base
+            hit == null -> {
+                if (gate?.granted != null) {
+                    Risk(ActionRisk.Irreversible, payment = true, ask = CHANGED_SCREEN_SENTINEL)
+                } else {
+                    base
+                }
+            }
             hit.action == IrrevAction.pay -> Risk(ActionRisk.Irreversible, payment = true, ask = null)
-            else -> Risk(base.level, payment = true, ask = grantToken(hit.action))
+            else -> Risk(
+                level = base.level,
+                payment = true,
+                ask = buildGateToken(hit, screen(), fallbackApp = fallbackAppProvider()),
+            )
         }
     }
+
+    val riskJudge: RiskJudge = riskJudge(gate = null)
 
     /**
      * 构建展示在 UI 确认卡片上的可读信息（不因缺少标题栏、自绘输入框或无金额字样而返回 `null` 漏拦）。

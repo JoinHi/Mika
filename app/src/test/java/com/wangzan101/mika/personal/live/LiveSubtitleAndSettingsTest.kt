@@ -33,6 +33,10 @@ class LiveSubtitleAndSettingsTest {
             "距离只有 1.2 公里",
             LiveSubtitleFormatter.extractActiveClause("找到了，这家店评分是 4.8 分，距离只有 1.2 公里。"),
         )
+        assertEquals(
+            "啊？马上帮你看下",
+            LiveSubtitleFormatter.extractActiveClause("啊？马上帮你看下。"),
+        )
 
         val longSentence = "这是一段没有任何标点符号的超长连续语音转写文本用来验证单行字幕尾部滑动窗口裁剪效果"
         val windowed = LiveSubtitleFormatter.extractActiveClause(longSentence, maxUnits = 16)

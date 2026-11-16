@@ -193,21 +193,29 @@ class PersonalLiveOrchestratorTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         try {
             val agent = PersonalAgent(store, scope, { fakeModel }, actions)
-            agent.recordLiveMessage("user", "帮我给张三发微信说五分钟后到")
+            val userMsg = agent.recordLiveMessage("user", "帮我给张三发微信")
+            agent.updateLiveUserMessage(userMsg!!.id, "帮我给张三发微信说五分钟后到")
             val task = agent.startLiveTask("给张三发微信", "打开微信给张三发消息：五分钟后到")
             // Duplicate launch for the same title/goal must reuse the active task atomically
             val duplicate = agent.startLiveTask("给张三发微信", "打开微信给张三发消息：五分钟后到")
             assertEquals(task.id, duplicate.id)
             assertEquals(1, startedTasks.size)
 
+            // Once cancelled (terminal), re-launching the same goal must start a fresh task rather than returning the dead one
+            agent.updateTask(task.id, "cancelled", detail = "已取消")
+            val retried = agent.startLiveTask("给张三发微信", "打开微信给张三发消息：五分钟后到")
+            assertFalse("Terminal task must not block retrying the same goal", task.id == retried.id)
+            assertEquals(2, startedTasks.size)
+
             agent.recordLiveMessage("assistant", "好嘞，已经在后台给你准备了。")
             delay(50)
 
             assertEquals("Text model must never be called for Live turns", 0, modelCallCount)
-            assertEquals(task.conversationId, startedTasks.single().first)
+            assertEquals(listOf(task.conversationId, retried.conversationId), startedTasks.map { it.first })
             val msgs = store.state.value.messages
             assertTrue(msgs.all { it.handled })
-            assertTrue(msgs.any { it.role == "user" && it.text.contains("张三") })
+            assertEquals(1, msgs.count { it.role == "user" })
+            assertTrue(msgs.any { it.role == "user" && it.text == "帮我给张三发微信说五分钟后到" })
             assertTrue(msgs.any { it.role == "assistant" && it.text.contains("好嘞") })
 
             val prompt = PersonalLiveTools.buildSystemPrompt(store.state.value, agent.memorySnapshot(), nowMs = 1_700_000_000_000L)
@@ -773,6 +781,12 @@ class PersonalLiveOrchestratorTest {
         assertEquals(5, queue.poll()!!.bytes[0].toInt())
         assertEquals(0, queue.queuedBytes)
         assertFalse(queue.hasChunks)
+
+        // Odd byte counts align down to 2-byte PCM16 sample boundaries
+        assertTrue(queue.offer(ByteArray(25) { 7 }))
+        assertEquals(24, queue.queuedBytes)
+        assertEquals(24, queue.poll()!!.bytes.size)
+        assertFalse(queue.offer(ByteArray(1) { 9 }))
     }
 
     @Test

@@ -214,22 +214,25 @@ class LiveDirectDecisionTest {
         }
         assertEquals("Explicit imperatives must invoke cloud IntentGate 0 times", 0, jevCalls)
 
-        // Question / negation / past-narrative utterances MUST still consult IntentGate
-        assertTrue(
-            LiveDirectDecision.shouldBlockAsDiscussion(
-                decision = countingJev,
-                currentTurnUserText = "我昨天打开淘宝买了个杯子",
-                commands = launchCommands,
-            ),
-        )
-        assertTrue(
-            LiveDirectDecision.shouldBlockAsDiscussion(
-                decision = countingJev,
-                currentTurnUserText = "先不要打开微信",
-                commands = launchCommands,
-            ),
-        )
-        assertEquals(2, jevCalls)
+        // Question / negation / conditional / Traditional Chinese utterances MUST still consult IntentGate
+        for (nonImperative in listOf(
+            "我昨天打开淘宝买了个杯子",
+            "先不要打开微信",
+            "千万不能打开微信",
+            "先別關閉藍牙",
+            "要不要打开蓝牙",
+            "刚才打开淘宝闪退了",
+        )) {
+            assertTrue(
+                "Expected '$nonImperative' to consult IntentGate",
+                LiveDirectDecision.shouldBlockAsDiscussion(
+                    decision = countingJev,
+                    currentTurnUserText = nonImperative,
+                    commands = launchCommands,
+                ),
+            )
+        }
+        assertEquals(6, jevCalls)
     }
 
     @Test
@@ -257,7 +260,8 @@ class LiveDirectDecisionTest {
             LiveDirectDecision.ExtendedToolCandidate("schedule_create", "Create a recurring or one-shot reminder/schedule"),
             LiveDirectDecision.ExtendedToolCandidate("schedule_list", "List active schedules and reminders"),
             LiveDirectDecision.ExtendedToolCandidate("phone_add_calendar_event", "Add an event to system calendar"),
-            LiveDirectDecision.ExtendedToolCandidate("call_dial", "Place a carrier phone call"),
+            LiveDirectDecision.ExtendedToolCandidate("phone_call_dial", "Place a carrier phone call"),
+            LiveDirectDecision.ExtendedToolCandidate("phone_call_state", "Check current phone call state"),
             LiveDirectDecision.ExtendedToolCandidate("memory_search", "Search long-term personal memory"),
         )
 

@@ -1,9 +1,12 @@
 package com.wangzan101.mika.ui
 
 import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -84,10 +87,13 @@ internal fun PersonalLiveLauncherPill(
     onStarted: () -> Unit = {},
 ) {
     val c = MikaTheme.colors
-    val app = LocalContext.current.applicationContext as MikaApp
+    val context = LocalContext.current
+    val app = context.applicationContext as MikaApp
     val running = state.phase.isRunning
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        val micGranted = result[Manifest.permission.RECORD_AUDIO] == true || live.hasRecordPermission()
+        if (micGranted) {
             if (state.providerConfigured || live.settings.resolve(app.providers) != null) {
                 live.start()
                 onStarted()
@@ -117,11 +123,21 @@ internal fun PersonalLiveLauncherPill(
             .testTag("personal-live-launcher")
             .clickable(role = Role.Button, onClickLabel = label) {
                 if (!running) {
+                    val needsNotificationPerm = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                     if (!state.providerConfigured && live.settings.resolve(app.providers) == null) {
                         onOpenLiveVoice()
                     } else if (!live.hasRecordPermission()) {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        val perms = if (needsNotificationPerm) {
+                            arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            arrayOf(Manifest.permission.RECORD_AUDIO)
+                        }
+                        permissionLauncher.launch(perms)
                     } else {
+                        if (needsNotificationPerm) {
+                            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
                         live.start()
                         onStarted()
                     }
@@ -424,6 +440,7 @@ internal fun LiveConfirmationCard(
 @Composable
 internal fun LiveHintChip(text: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     val c = MikaTheme.colors
+    val closeLabel = stringResource(R.string.personal_close)
     Row(
         modifier.fillMaxWidth()
             .cardSurface(c, RoundedCornerShape(14.dp))
@@ -434,7 +451,10 @@ internal fun LiveHintChip(text: String, onDismiss: () -> Unit, modifier: Modifie
         Icon(MikaIcons.Info, null, Modifier.size(16.dp), tint = c.ink2)
         Text(text, Modifier.weight(1f), style = MikaType.Caption, color = c.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Box(
-            Modifier.size(24.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onDismiss),
+            Modifier.size(24.dp)
+                .clip(CircleShape)
+                .clickable(role = Role.Button, onClickLabel = closeLabel, onClick = onDismiss)
+                .semantics { contentDescription = closeLabel },
             contentAlignment = Alignment.Center,
         ) {
             Icon(MikaIcons.Close, null, Modifier.size(14.dp), tint = c.ink3)

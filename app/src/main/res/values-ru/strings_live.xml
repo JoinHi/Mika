@@ -14,27 +14,17 @@
     <string name="live_status_listening">Слушает</string>
     <string name="live_status_listening_tasks">Слушает · задач: %1$d</string>
 
-    <string name="live_action_mute">Выкл. звук</string>
-    <string name="live_action_unmute">Вкл. звук</string>
+    <string name="live_action_mute">Выкл. микрофон</string>
+    <string name="live_action_unmute">Вкл. микрофон</string>
     <string name="live_action_hangup">Завершить</string>
     <string name="live_action_share_screen">Показать текущий экран</string>
-    <string name="live_action_type_message">Ввести текст</string>
-    <string name="live_action_back_to_voice">К панели голоса</string>
-    <string name="live_action_settings">Настройки голоса</string>
 
     <string name="live_you_prefix">Вы: %1$s</string>
     <string name="live_mika_prefix">Mika: %1$s</string>
 
-    <string name="live_settings_title">Голос Mika Live</string>
-    <string name="live_settings_subtitle">Двусторонний голосовой диалог в реальном времени с управлением телефоном на базе Gemini Live</string>
     <string name="live_settings_provider_label">Провайдер Gemini</string>
-    <string name="live_settings_no_gemini_body">Провайдер Gemini с API-ключом ещё не настроен. Сначала добавьте ключ Gemini API в настройках моделей.</string>
-    <string name="live_settings_open_models">Открыть настройки моделей</string>
     <string name="live_settings_voice_label">Голос</string>
     <string name="live_settings_model_label">Модель живого аудио</string>
-    <string name="live_settings_refresh_models">Обновить</string>
-    <string name="live_settings_start_now">Запустить Mika Live</string>
-    <string name="live_settings_reconnect_apply">Переподключить и применить</string>
 
     <string name="live_error_mic_permission">Для голосового общения Mika Live требуется доступ к микрофону.</string>
     <string name="live_error_no_gemini_key">Сначала укажите API-ключ Gemini в настройках моделей.</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">Сначала переключитесь в другое приложение и проверьте специальные возможности и доступ к экрану.</string>
     <string name="live_hint_idle_hangup">Сеанс Mika Live автоматически завершён после 3 минут тишины.</string>
 
-    <string name="live_hint_direct_elapsed">⚡ Прямое управление · шагов: %1$d за %2$s с</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Задача выполнена за %1$s с</string>
-
     <string name="live_stage_idle_title">Виртуальный экран готов</string>
     <string name="live_stage_idle_body">Скажите Mika открыть приложение или выполнить действие — экран появится здесь в реальном времени во весь размер.</string>
     <string name="live_stage_preparing">Запуск виртуального экрана…</string>
-    <string name="live_stage_touch_on">Касание</string>
-    <string name="live_stage_touch_off">Масштаб</string>
-    <string name="live_stage_view_chat">Чат</string>
-    <string name="live_stage_view_screen">Экран</string>
-    <string name="live_stage_using_web">Веб-браузер</string>
-    <string name="live_stage_back">Назад на виртуальном экране</string>
     <string name="live_stage_snapshot_wake">Экран на паузе · Нажмите, чтобы продолжить</string>
 
     <string name="role_live_voice">Модель голосового звонка</string>

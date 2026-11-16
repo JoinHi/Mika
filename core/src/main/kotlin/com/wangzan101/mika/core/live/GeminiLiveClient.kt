@@ -1,7 +1,9 @@
 package com.wangzan101.mika.core.live
 
+import com.wangzan101.mika.core.model.headerOrReject
 import com.wangzan101.mika.core.net.NetProxy
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -9,13 +11,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -60,8 +63,8 @@ class GeminiLiveClient(
 
         val request = Request.Builder()
             .url(wsUrl)
-            .apply { extraHeaders.forEach { (k, v) -> header(k, v) } }
-            .header("x-goog-api-key", apiKey.trim())
+            .apply { extraHeaders.forEach { (k, v) -> headerOrReject(k, v) } }
+            .headerOrReject("x-goog-api-key", apiKey.trim())
             .build()
 
         val socket = wsHttp.newWebSocket(request, object : WebSocketListener() {
@@ -86,6 +89,10 @@ class GeminiLiveClient(
                 for (event in parsed) {
                     if (event is LiveSessionEvent.SetupComplete && !ready.isCompleted) {
                         ready.complete(Unit)
+                    }
+                    if (event is LiveSessionEvent.Closed) {
+                        emitClosed(event.code, event.reason, event.error)
+                        continue
                     }
                     if (event is LiveSessionEvent.AudioDelta) {
                         if (queuedAudioChunks.incrementAndGet() > MAX_QUEUED_AUDIO_CHUNKS) {
@@ -137,7 +144,8 @@ class GeminiLiveClient(
         })
 
         try {
-            withTimeout(connectTimeoutMs) { ready.await() }
+            withTimeoutOrNull(connectTimeoutMs) { ready.await() }
+                ?: throw SocketTimeoutException("Gemini Live 握手超时 (${connectTimeoutMs}ms)")
         } catch (t: Throwable) {
             socket.cancel()
             channel.close()
@@ -245,7 +253,8 @@ object GeminiLiveModels {
         apiKey: String,
         http: OkHttpClient = sharedModelsHttp,
         extraHeaders: Map<String, String> = emptyMap(),
-    ): Result<List<String>> = runCatching {
+    ): Result<List<String>> = try {
+        require(apiKey.isNotBlank()) { "缺少 Gemini API Key" }
         val cleanBase = GeminiLiveProtocol.restBaseUrl(baseUrl)
         val client = http.newBuilder()
             .followRedirects(false)
@@ -263,8 +272,8 @@ object GeminiLiveModels {
             }.orEmpty()
             val req = Request.Builder()
                 .url("$cleanBase/v1beta/models?pageSize=100$tokenParam")
-                .apply { extraHeaders.forEach { (k, v) -> header(k, v) } }
-                .header("x-goog-api-key", apiKey.trim())
+                .apply { extraHeaders.forEach { (k, v) -> headerOrReject(k, v) } }
+                .headerOrReject("x-goog-api-key", apiKey.trim())
                 .get()
                 .build()
             val body = executeAsync(client, req)
@@ -273,7 +282,11 @@ object GeminiLiveModels {
             if (nextToken.isNullOrBlank() || nextToken == pageToken) break
             pageToken = nextToken
         }
-        sortBidiModelIds(collected)
+        Result.success(sortBidiModelIds(collected))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     private suspend fun executeAsync(client: OkHttpClient, request: Request): String =

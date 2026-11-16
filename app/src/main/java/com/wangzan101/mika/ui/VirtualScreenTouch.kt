@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalView
 import com.wangzan101.mika.cap.phone.display.PipInput
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.hypot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -85,6 +86,7 @@ internal data class PointerSample(
     val x: Float,
     val y: Float,
     val pressed: Boolean,
+    val canceled: Boolean = false,
 )
 
 private class ActiveSlot(
@@ -190,6 +192,9 @@ internal class StreamTouchTracker(
         eventTimeMs: Long,
     ): List<TouchEventPacket> {
         if (active.isEmpty()) return emptyList()
+        if (changes.any { it.canceled }) {
+            return listOfNotNull(cancelRemaining(eventTimeMs))
+        }
         val out = ArrayList<TouchEventPacket>(4)
 
         // 0) 判定是否解锁死区：多指按下立即解锁；单指仅在持续按压期间（pressed == true）越过 touchSlop 才解锁，忽略抬指瞬间的电容剥离漂移
@@ -452,7 +457,12 @@ internal suspend fun consumeTouchChannel(
                 } else {
                     val fx = pkt.normXs.getOrElse(0) { 0f }
                     val fy = pkt.normYs.getOrElse(0) { 0f }
-                    runCatching { input.tap(fx, fy) }
+                    try {
+                        input.tap(fx, fy)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (_: Exception) {
+                    }
                 }
                 gestureActive = false
                 streaming = false
@@ -514,12 +524,17 @@ internal suspend fun consumeTouchChannel(
                         if (pkt.movedBeyondSlop) fallbackMoved = true
                         val pts = fallbackPoints.toList()
                         if (pts.isNotEmpty()) {
-                            if (!fallbackMoved) {
-                                val (fx, fy) = pts.first()
-                                runCatching { input.tap(fx, fy) }
-                            } else {
-                                val duration = (fallbackLastTime - fallbackDownTime).coerceIn(80L, 600L)
-                                runCatching { input.swipe(pts, duration) }
+                            try {
+                                if (!fallbackMoved) {
+                                    val (fx, fy) = pts.first()
+                                    input.tap(fx, fy)
+                                } else {
+                                    val duration = (fallbackLastTime - fallbackDownTime).coerceIn(80L, 600L)
+                                    input.swipe(pts, duration)
+                                }
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (_: Exception) {
                             }
                         }
                     }
@@ -529,12 +544,14 @@ internal suspend fun consumeTouchChannel(
                     lastPacket = null
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    if (streaming && gestureActive) {
+                    if (gestureActive) {
                         val evTime = maxOf(pkt.eventTime, activeStreamDownTime)
                         runCatching {
                             input.injectTouch(pkt.action, activeStreamDownTime, evTime, pkt.pointerIds, pkt.normXs, pkt.normYs)
                         }
-                        lastInjectedUpTime = evTime
+                        if (streaming) {
+                            lastInjectedUpTime = evTime
+                        }
                     }
                     gestureActive = false
                     streaming = false
@@ -565,7 +582,7 @@ internal suspend fun consumeTouchChannel(
             }
         }
     } finally {
-        if (streaming && gestureActive) {
+        if (gestureActive) {
             val tail = lastPacket
             if (tail != null && tail.pointerIds.isNotEmpty()) {
                 withContext(NonCancellable) {
@@ -657,18 +674,20 @@ internal fun Modifier.virtualScreenTouch(input: PipInput): Modifier {
 
                             if (size.width <= 0 || size.height <= 0) break
                             val changes = event.changes
-                            changes.forEach { it.consume() }
+                            val samples = changes.map { c ->
+                                PointerSample(
+                                    id = c.id.value,
+                                    x = c.position.x,
+                                    y = c.position.y,
+                                    pressed = c.pressed,
+                                    canceled = c.isConsumed,
+                                )
+                            }
+                            changes.forEach { if (!it.isConsumed) it.consume() }
                             val eventTime = changes.maxOfOrNull { it.uptimeMillis } ?: SystemClock.uptimeMillis()
 
                             val packets = tracker.onPointerEvent(
-                                changes = changes.map { c ->
-                                    PointerSample(
-                                        id = c.id.value,
-                                        x = c.position.x,
-                                        y = c.position.y,
-                                        pressed = c.pressed,
-                                    )
-                                },
+                                changes = samples,
                                 width = size.width,
                                 height = size.height,
                                 eventTimeMs = eventTime,
@@ -676,9 +695,14 @@ internal fun Modifier.virtualScreenTouch(input: PipInput): Modifier {
 
                             for (pkt in packets) {
                                 channel.trySend(pkt)
-                                if ((pkt.action and MotionEvent.ACTION_MASK) == MotionEvent.ACTION_UP) {
+                                val maskedAction = pkt.action and MotionEvent.ACTION_MASK
+                                if (maskedAction == MotionEvent.ACTION_UP || maskedAction == MotionEvent.ACTION_CANCEL) {
                                     finishedCleanly = true
                                 }
+                            }
+                            if (samples.any { it.canceled }) {
+                                finishedCleanly = true
+                                break
                             }
                         }
                     } finally {

@@ -28,54 +28,67 @@ import kotlinx.coroutines.launch
 class PersonalLiveService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var observing = false
+    private var promoted = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as MikaApp
+        val liveState = app.personal.live.uiState.value
+
+        // Always acknowledge a startForegroundService delivery before handling stop/stale states;
+        // calling stopSelf() prior to startForeground() crashes the process on Android 10+.
+        ensureChannel(this)
+        if (!promoted) {
+            try {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    buildNotification(this, liveState),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+                promoted = true
+            } catch (t: Throwable) {
+                if (liveState.phase.keepServiceAlive && intent?.action != ACTION_STOP) {
+                    app.personal.live.onForegroundServiceFailed(t)
+                }
+                stopSelfResult(startId)
+                return START_NOT_STICKY
+            }
+        }
+
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> {
                 app.personal.live.toggleMute()
+                if (!app.personal.live.uiState.value.phase.keepServiceAlive) {
+                    demoteAndStop()
+                }
                 return START_NOT_STICKY
             }
             ACTION_STOP -> {
                 app.personal.live.stop()
-                stopSelf()
+                demoteAndStop()
                 return START_NOT_STICKY
             }
         }
 
-        val liveState = app.personal.live.uiState.value
         if (!liveState.phase.keepServiceAlive) {
-            stopSelf()
+            demoteAndStop()
             return START_NOT_STICKY
         }
 
-        ensureChannel(this)
-        val notification = buildNotification(this, liveState)
-        try {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
-        } catch (t: Throwable) {
-            app.personal.live.onForegroundServiceFailed(t)
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        val nm = getSystemService(NotificationManager::class.java)
+        nm?.notify(NOTIFICATION_ID, buildNotification(this, liveState))
 
         if (!observing) {
             observing = true
             scope.launch {
                 app.personal.live.uiState.collectLatest { state ->
                     if (!state.phase.keepServiceAlive) {
-                        ServiceCompat.stopForeground(this@PersonalLiveService, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                        stopSelf()
+                        demoteAndStop()
                     } else {
-                        val nm = getSystemService(NotificationManager::class.java)
-                        nm?.notify(NOTIFICATION_ID, buildNotification(this@PersonalLiveService, state))
+                        val mgr = getSystemService(NotificationManager::class.java)
+                        mgr?.notify(NOTIFICATION_ID, buildNotification(this@PersonalLiveService, state))
                     }
                 }
             }
@@ -83,7 +96,24 @@ class PersonalLiveService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun demoteAndStop() {
+        if (promoted) {
+            promoted = false
+            runCatching {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
+        }
+        stopSelf()
+    }
+
     override fun onDestroy() {
+        if (promoted) {
+            promoted = false
+            runCatching {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
+        }
+        observing = false
         scope.cancel()
         super.onDestroy()
     }

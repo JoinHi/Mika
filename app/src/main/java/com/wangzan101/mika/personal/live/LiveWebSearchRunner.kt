@@ -66,8 +66,15 @@ internal class LiveWebSearchRunner(
         val count = (rawCount ?: DEFAULT_COUNT).coerceIn(1, MAX_LIVE_COUNT)
         _activeCount.update { it + 1 }
         val deferred = scope.async(Dispatchers.IO) {
-            service.search(query, count)
+            try {
+                service.search(query, count)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                WebSearchResult.Failure("search_error", e.message ?: "联网检索请求失败。")
+            }
         }
+        trackJob(deferred)
 
         val immediate = try {
             withTimeoutOrNull(FAST_SYNC_TIMEOUT_MS) { deferred.await() }
@@ -91,8 +98,14 @@ internal class LiveWebSearchRunner(
                 deferred.cancel()
                 throw e
             } finally {
-                _activeCount.update { (it - 1).coerceAtLeast(0) }
-                onStatusHint(null)
+                var remaining = 0
+                _activeCount.update { cur ->
+                    remaining = (cur - 1).coerceAtLeast(0)
+                    remaining
+                }
+                if (remaining == 0) {
+                    onStatusHint(null)
+                }
             }
         }
         trackJob(followUpJob)

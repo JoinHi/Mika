@@ -18,23 +18,13 @@
     <string name="live_action_unmute">Unmute</string>
     <string name="live_action_hangup">End</string>
     <string name="live_action_share_screen">Share current screen</string>
-    <string name="live_action_type_message">Type message</string>
-    <string name="live_action_back_to_voice">Voice bar</string>
-    <string name="live_action_settings">Live settings</string>
 
     <string name="live_you_prefix">You: %1$s</string>
     <string name="live_mika_prefix">Mika: %1$s</string>
 
-    <string name="live_settings_title">Mika Live Voice</string>
-    <string name="live_settings_subtitle">Real-time full-duplex voice chat while controlling your phone, powered by Gemini Live</string>
     <string name="live_settings_provider_label">Gemini provider</string>
-    <string name="live_settings_no_gemini_body">No Gemini provider with an API key is configured yet. Add a Gemini API key in Model Settings first.</string>
-    <string name="live_settings_open_models">Open Model Settings</string>
     <string name="live_settings_voice_label">Voice</string>
     <string name="live_settings_model_label">Live audio model</string>
-    <string name="live_settings_refresh_models">Refresh</string>
-    <string name="live_settings_start_now">Start Mika Live</string>
-    <string name="live_settings_reconnect_apply">Reconnect to apply</string>
 
     <string name="live_error_mic_permission">Microphone permission is required for Mika Live voice chat.</string>
     <string name="live_error_no_gemini_key">Please configure a Gemini API key in Model Settings first.</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">Switch to another app first or check Accessibility screen access to share your screen.</string>
     <string name="live_hint_idle_hangup">Mika Live ended automatically after 3 minutes of silence.</string>
 
-    <string name="live_hint_direct_elapsed">⚡ Direct control · %1$d steps in %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Task finished in %1$ss</string>
-
     <string name="live_stage_idle_title">Live virtual screen ready</string>
     <string name="live_stage_idle_body">Speak any app or action to Mika and the live virtual screen will fill this stage in real time.</string>
     <string name="live_stage_preparing">Starting live virtual screen…</string>
-    <string name="live_stage_touch_on">Touch</string>
-    <string name="live_stage_touch_off">Zoom</string>
-    <string name="live_stage_view_chat">Chat</string>
-    <string name="live_stage_view_screen">Screen</string>
-    <string name="live_stage_using_web">Web browser</string>
-    <string name="live_stage_back">Virtual screen back</string>
     <string name="live_stage_snapshot_wake">Screen paused · Tap to resume</string>
 
     <string name="role_live_voice">Voice call model</string>

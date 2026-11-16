@@ -26,12 +26,9 @@ object GeminiLiveProtocol {
     const val DEFAULT_VOICE = "Aoede"
 
     val GEMINI_CAPABILITIES = LiveProviderCapabilities(
-        toolTier = LiveToolTier.RICH_TOOLS,
         supportsNonBlockingTools = true,
         supportsVisualFrames = true,
         supportsResumption = true,
-        inputSampleRateHz = INPUT_SAMPLE_RATE,
-        outputSampleRateHz = OUTPUT_SAMPLE_RATE,
     )
 
     val VOICES = listOf("Aoede", "Kore", "Puck", "Charon", "Fenrir", "Leda", "Orus", "Zephyr")
@@ -39,23 +36,46 @@ object GeminiLiveProtocol {
     private val json = Json { ignoreUnknownKeys = true }
     private val rejectedSchemaKeys = setOf("additionalProperties", "\$schema", "\$id", "\$defs")
 
+    private fun stripVersionSuffix(url: String): String = url
+        .trimEnd('/')
+        .removeSuffix("/v1beta")
+        .removeSuffix("/v1alpha")
+        .removeSuffix("/v1")
+        .trimEnd('/')
+
     fun wsUrl(baseUrl: String): String {
-        val raw = baseUrl.trim()
+        val cleaned = baseUrl.trim()
             .substringBefore('#')
             .substringBefore('?')
-            .trimEnd('/')
-            .removeSuffix("/v1beta")
-            .removeSuffix("/v1alpha")
-            .removeSuffix("/v1")
-            .trimEnd('/')
-        require(raw.isNotBlank()) { "Gemini Live baseUrl 不能为空" }
+            .trim()
+        require(cleaned.isNotBlank()) { "Gemini Live baseUrl 不能为空" }
         val wsBase = when {
-            raw.startsWith("https://", ignoreCase = true) -> "wss://" + raw.substring(8)
-            raw.startsWith("http://", ignoreCase = true) -> "ws://" + raw.substring(7)
-            raw.startsWith("wss://", ignoreCase = true) -> "wss://" + raw.substring(6)
-            raw.startsWith("ws://", ignoreCase = true) -> "ws://" + raw.substring(5)
-            "://" in raw -> throw IllegalArgumentException("不支持的 Gemini Live 协议地址: $baseUrl")
-            else -> "wss://$raw"
+            cleaned.startsWith("https://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(8))
+                require(rest.isNotBlank()) { "无效的 Gemini Live 主机地址: $baseUrl" }
+                "wss://$rest"
+            }
+            cleaned.startsWith("http://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(7))
+                require(rest.isNotBlank()) { "无效的 Gemini Live 主机地址: $baseUrl" }
+                "ws://$rest"
+            }
+            cleaned.startsWith("wss://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(6))
+                require(rest.isNotBlank()) { "无效的 Gemini Live 主机地址: $baseUrl" }
+                "wss://$rest"
+            }
+            cleaned.startsWith("ws://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(5))
+                require(rest.isNotBlank()) { "无效的 Gemini Live 主机地址: $baseUrl" }
+                "ws://$rest"
+            }
+            "://" in cleaned -> throw IllegalArgumentException("不支持的 Gemini Live 协议地址: $baseUrl")
+            else -> {
+                val rest = stripVersionSuffix(cleaned)
+                require(rest.isNotBlank()) { "无效的 Gemini Live 主机地址: $baseUrl" }
+                "wss://$rest"
+            }
         }
         val parsed = try {
             URI(wsBase)
@@ -67,21 +87,38 @@ object GeminiLiveProtocol {
     }
 
     fun restBaseUrl(baseUrl: String): String {
-        val raw = baseUrl.trim()
+        val cleaned = baseUrl.trim()
             .substringBefore('#')
             .substringBefore('?')
-            .trimEnd('/')
-            .removeSuffix("/v1beta")
-            .removeSuffix("/v1alpha")
-            .removeSuffix("/v1")
-            .trimEnd('/')
-        require(raw.isNotBlank()) { "Gemini API 地址不能为空" }
+            .trim()
+        require(cleaned.isNotBlank()) { "Gemini API 地址不能为空" }
         val httpBase = when {
-            raw.startsWith("https://", ignoreCase = true) || raw.startsWith("http://", ignoreCase = true) -> raw
-            raw.startsWith("wss://", ignoreCase = true) -> "https://" + raw.substring(6)
-            raw.startsWith("ws://", ignoreCase = true) -> "http://" + raw.substring(5)
-            "://" in raw -> throw IllegalArgumentException("不支持的 Gemini API 协议地址: $baseUrl")
-            else -> "https://$raw"
+            cleaned.startsWith("https://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(8))
+                require(rest.isNotBlank()) { "无效的 Gemini API 主机地址: $baseUrl" }
+                "https://$rest"
+            }
+            cleaned.startsWith("http://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(7))
+                require(rest.isNotBlank()) { "无效的 Gemini API 主机地址: $baseUrl" }
+                "http://$rest"
+            }
+            cleaned.startsWith("wss://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(6))
+                require(rest.isNotBlank()) { "无效的 Gemini API 主机地址: $baseUrl" }
+                "https://$rest"
+            }
+            cleaned.startsWith("ws://", ignoreCase = true) -> {
+                val rest = stripVersionSuffix(cleaned.substring(5))
+                require(rest.isNotBlank()) { "无效的 Gemini API 主机地址: $baseUrl" }
+                "http://$rest"
+            }
+            "://" in cleaned -> throw IllegalArgumentException("不支持的 Gemini API 协议地址: $baseUrl")
+            else -> {
+                val rest = stripVersionSuffix(cleaned)
+                require(rest.isNotBlank()) { "无效的 Gemini API 主机地址: $baseUrl" }
+                "https://$rest"
+            }
         }
         val parsed = try {
             URI(httpBase)
@@ -228,6 +265,14 @@ object GeminiLiveProtocol {
         }
         val events = ArrayList<GeminiLiveEvent>(4)
 
+        (root["error"] as? JsonObject)?.let { err ->
+            val code = (err["code"] as? JsonPrimitive)?.intOrNull ?: -1
+            val message = (err["message"] as? JsonPrimitive)?.contentOrNull
+                ?: (err["status"] as? JsonPrimitive)?.contentOrNull
+                ?: "Gemini Live server error"
+            events += LiveSessionEvent.Closed(code, message)
+        }
+
         if ("setupComplete" in root) {
             events += LiveSessionEvent.SetupComplete
         }
@@ -251,9 +296,11 @@ object GeminiLiveProtocol {
 
             (content["inputTranscription"] as? JsonObject)?.let { tr ->
                 val text = (tr["text"] as? JsonPrimitive)?.contentOrNull
-                if (!text.isNullOrEmpty()) events += LiveSessionEvent.InputTranscriptDelta(text)
-                if ((tr["finished"] as? JsonPrimitive)?.booleanOrNull == true && !text.isNullOrBlank()) {
-                    events += LiveSessionEvent.InputTranscriptCompleted(text.trim())
+                val finished = (tr["finished"] as? JsonPrimitive)?.booleanOrNull == true
+                if (finished) {
+                    events += LiveSessionEvent.InputTranscriptCompleted(text?.trim().orEmpty())
+                } else if (!text.isNullOrEmpty()) {
+                    events += LiveSessionEvent.InputTranscriptDelta(text)
                 }
             }
 

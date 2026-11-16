@@ -5,8 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Opt-in, task-scoped incoming SMS only; never request READ_SMS or the default SMS role. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <!-- 按住说话时录音，转成文字；用户浏览器里的网页要麦克风时也用它。 -->
+    <!-- 按住说话时录音，转成文字；实时语音对话与用户浏览器里的网页要麦克风时也用它。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 实时全双工语音对话切换免提外放/蓝牙耳机路由与硬件回声消除通信模式(普通权限,安装即有)。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 用户浏览器里的网页要摄像头（Mika 自己拍照走系统相机，不用这个权限）；网页请求时先弹框问用户。 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 用户浏览器里的网页要定位；网页请求时先弹框问用户。 -->

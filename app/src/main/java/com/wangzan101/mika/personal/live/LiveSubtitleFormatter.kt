@@ -70,7 +70,13 @@ object LiveSubtitleFormatter {
         val first = clauses[0]
         if (visualUnits(first) <= SHORT_INTERJECTION_UNITS) {
             val second = clauses[1]
-            val sep = if (first.last().code > 127 || second.first().code > 127) "，" else ", "
+            val lastChar = first.last()
+            val sep = when {
+                lastChar == '？' || lastChar == '！' -> ""
+                lastChar == '?' || lastChar == '!' -> " "
+                lastChar.code > 127 || second.first().code > 127 -> "，"
+                else -> ", "
+            }
             val combined = "$first$sep$second"
             if (clauses.size == 2) {
                 return listOf(combined)

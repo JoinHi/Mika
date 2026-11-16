@@ -7,10 +7,12 @@ import com.wangzan101.mika.core.model.Author
 import com.wangzan101.mika.core.model.ChatModel
 import com.wangzan101.mika.core.model.Message
 import com.wangzan101.mika.core.model.ModelRole
+import com.wangzan101.mika.core.model.ModelSession
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.model.Role
 import com.wangzan101.mika.core.model.ToolSpec
 import com.wangzan101.mika.core.observation.Untrusted
+import com.wangzan101.mika.core.personal.PersonalAgent
 import java.time.Instant
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
@@ -49,10 +51,13 @@ internal class LiveDeepThinkRunner(
     private val webSearch: LiveWebSearchRunner,
     private val turnCoordinator: LiveTurnCoordinator,
     private val onStatusHint: (String?) -> Unit,
-    private val modelProvider: () -> ChatModel? = { app?.providers?.modelFor(ModelRole.Main) },
+    private val modelProvider: () -> ChatModel? = {
+        app?.let { a -> a.tasks.modelFactory(a, ModelSession.of(PersonalAgent.MAIN_CONVERSATION_ID)) }
+    },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private class ActiveThink(
+        val seq: Int,
         val id: String,
         val question: String,
         val notes: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue(),
@@ -86,13 +91,14 @@ internal class LiveDeepThinkRunner(
         }
 
         if (active.size >= 2) {
-            active.keys.minOrNull()?.let { oldest ->
-                active.remove(oldest)?.job?.cancel()
+            active.values.minByOrNull { it.seq }?.let { oldest ->
+                active.remove(oldest.id)?.job?.cancel()
             }
         }
 
-        val id = "think_${idSeq.incrementAndGet()}"
-        val entry = ActiveThink(id = id, question = question)
+        val seq = idSeq.incrementAndGet()
+        val id = "think_$seq"
+        val entry = ActiveThink(seq = seq, id = id, question = question)
         active[id] = entry
         refreshStatusHint()
 
@@ -104,23 +110,24 @@ internal class LiveDeepThinkRunner(
                     extraContext = contextRaw.trim(),
                     recentChat = recentChat.trim(),
                 )
-                if (conclusion.isNotBlank()) {
-                    turnCoordinator.enqueue(
-                        LiveAsyncEvent.DeepThinkResult(
-                            thinkId = id,
-                            question = question,
-                            spokenConclusion = conclusion,
-                        ),
-                    )
+                val spoken = conclusion.ifBlank {
+                    "刚才后台深度推演等待响应超时了，如果您还需要深入分析这个问题，请告诉我一声。"
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (t: Throwable) {
                 turnCoordinator.enqueue(
                     LiveAsyncEvent.DeepThinkResult(
                         thinkId = id,
                         question = question,
-                        spokenConclusion = "抱歉，刚才后台深度推演时遇到一点网络或模型异常（${t.message?.take(80) ?: "请求失败"}），需要的话我可以再帮您分析一次。",
+                        spokenConclusion = spoken,
+                    ),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                turnCoordinator.enqueue(
+                    LiveAsyncEvent.DeepThinkResult(
+                        thinkId = id,
+                        question = question,
+                        spokenConclusion = "抱歉，刚才后台深度推演时遇到一点网络或模型异常（${e.message?.take(80) ?: "请求失败"}），需要的话我可以再帮您分析一次。",
                     ),
                 )
             } finally {
@@ -139,7 +146,7 @@ internal class LiveDeepThinkRunner(
     }
 
     fun steerOrCancel(thinkIdRaw: String, actionRaw: String, noteRaw: String): JsonObject {
-        val target = if (thinkIdRaw.isNotBlank()) active[thinkIdRaw] else active.values.lastOrNull()
+        val target = if (thinkIdRaw.isNotBlank()) active[thinkIdRaw] else active.values.maxByOrNull { it.seq }
         if (target == null) {
             return buildJsonObject {
                 put("ok", false)
@@ -235,12 +242,17 @@ internal class LiveDeepThinkRunner(
             }
         }
 
+        var timedOut = false
         for (step in 1..MAX_REASONING_STEPS) {
             drainNotesIntoHistory()
             val tools = exposedToolsForStep(step)
             val reply = withTimeoutOrNull(PER_MODEL_CALL_TIMEOUT_MS) {
                 model.complete(system, history, tools)
-            } ?: break
+            }
+            if (reply == null) {
+                timedOut = true
+                break
+            }
 
             val calls = reply.parts.filterIsInstance<Part.ToolCall>()
             if (calls.isEmpty()) {
@@ -271,6 +283,7 @@ internal class LiveDeepThinkRunner(
             history += Message(Role.Tool, results, Author.Mika)
         }
 
+        if (timedOut) return ""
         drainNotesIntoHistory()
         appendUserPrompt("请立即基于以上信息给出最终口播版结论（不超过 260 字）。")
         val finalReply = withTimeoutOrNull(PER_MODEL_CALL_TIMEOUT_MS) {

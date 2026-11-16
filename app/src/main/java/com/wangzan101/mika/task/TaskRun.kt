@@ -740,6 +740,7 @@ class TaskRun(
                 shellBinder = shell.asBinder()
                 side.launch { conn.shell.map { it != null }.collect { shellUp.value = it } }
                 val agentDisplay = LazyAgentDisplay(metrics.widthPixels, metrics.heightPixels) {
+                    (service.application as? MikaApp)?.personal?.live?.yieldDirectPhoneForTask()
                     suspend fun create() = resources.acquire(Dispatchers.IO, AgentDisplay::release) { AgentDisplay(shell, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi, service.getSystemService(DisplayManager::class.java)) }
                     try {
                         create()
@@ -756,12 +757,23 @@ class TaskRun(
                         _pipInput.value = PipInputImpl(shell, d) { states.locked.value }
                         stageGuidanceReader = {
                             withContext(Dispatchers.IO) {
-                                runCatching { phone?.screen?.waitStable(600L) }
+                                try {
+                                    phone?.screen?.waitStable(600L)
+                                } catch (ce: CancellationException) {
+                                    throw ce
+                                } catch (_: Exception) {
+                                }
                                 if (!previewAllowed()) return@withContext null
-                                val snap = runCatching { accessGuard?.peek() }.getOrNull()
+                                val snap = try {
+                                    accessGuard?.peek()
+                                } catch (ce: CancellationException) {
+                                    throw ce
+                                } catch (_: Exception) {
+                                    null
+                                }
                                 val pkg = snap?.packageName ?: phone?.screen?.target?.value?.packageName
                                 val label = pkg?.takeIf { it.isNotBlank() }?.let { ConfirmationNotifier.appLabel(service, it) }
-                                val bmp = d.frames.value ?: d.refreshPreviewFrame()
+                                val bmp = phone?.screen?.servablePreviewBitmap()
                                 StageGuidanceFrame(label, snap, bmp)
                             }
                         }
@@ -1088,7 +1100,10 @@ class TaskRun(
                 // 助手断开、被挪走只在这一步用的是手机时才查
                 gate = { w ->
                     if (phoneScreen.acquired && dispatcher?.surface != WEB) {
-                        if (stageTouchHold.value) stageTouchHold.first { !it }
+                        if (stageTouchHold.value) {
+                            kotlinx.coroutines.withTimeoutOrNull(10_000L) { stageTouchHold.first { !it } }
+                            stageTouchHold.value = false
+                        }
                         phone?.screen?.let { awaitUserPick(it, taskGate, w) }
                     }
                     taskGate.pass({ phoneScreen.acquired && dispatcher?.surface != WEB }, w)
@@ -1274,7 +1289,9 @@ class TaskRun(
             normXs: FloatArray,
             normYs: FloatArray,
         ): Boolean {
-            if (isLocked()) return false
+            val masked = action and android.view.MotionEvent.ACTION_MASK
+            val isReleaseOrCancel = masked == android.view.MotionEvent.ACTION_UP || masked == android.view.MotionEvent.ACTION_CANCEL
+            if (isLocked() && !isReleaseOrCancel) return false
             if (pointerIds.isEmpty() || pointerIds.size != normXs.size || pointerIds.size != normYs.size) return false
             val n = pointerIds.size
             val px = FloatArray(n) { scaleTouchToDisplay(normXs[it], display.width) }

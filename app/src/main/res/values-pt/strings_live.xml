@@ -18,23 +18,13 @@
     <string name="live_action_unmute">Ativar microfone</string>
     <string name="live_action_hangup">Encerrar</string>
     <string name="live_action_share_screen">Compartilhar tela atual</string>
-    <string name="live_action_type_message">Digitar mensagem</string>
-    <string name="live_action_back_to_voice">Barra de voz</string>
-    <string name="live_action_settings">Configurações de voz</string>
 
     <string name="live_you_prefix">Você: %1$s</string>
     <string name="live_mika_prefix">Mika: %1$s</string>
 
-    <string name="live_settings_title">Voz do Mika Live</string>
-    <string name="live_settings_subtitle">Conversa de voz bidirecional em tempo real enquanto controla o celular com Gemini Live</string>
     <string name="live_settings_provider_label">Provedor Gemini</string>
-    <string name="live_settings_no_gemini_body">Nenhum provedor Gemini com chave de API foi configurado ainda. Adicione primeiro uma chave de API do Gemini nas Configurações de modelos.</string>
-    <string name="live_settings_open_models">Abrir configurações de modelos</string>
     <string name="live_settings_voice_label">Voz</string>
     <string name="live_settings_model_label">Modelo de áudio ao vivo</string>
-    <string name="live_settings_refresh_models">Atualizar</string>
-    <string name="live_settings_start_now">Iniciar Mika Live</string>
-    <string name="live_settings_reconnect_apply">Reconectar e aplicar</string>
 
     <string name="live_error_mic_permission">A permissão do microfone é necessária para a conversa de voz do Mika Live.</string>
     <string name="live_error_no_gemini_key">Configure primeiro uma chave de API do Gemini nas Configurações de modelos.</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">Alterne primeiro para outro aplicativo e verifique a acessibilidade e a permissão de compartilhamento de tela.</string>
     <string name="live_hint_idle_hangup">O Mika Live foi encerrado automaticamente após 3 minutos de silêncio.</string>
 
-    <string name="live_hint_direct_elapsed">⚡ Controle direto · %1$d etapas em %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Tarefa concluída em %1$ss</string>
-
     <string name="live_stage_idle_title">Tela virtual ao vivo pronta</string>
     <string name="live_stage_idle_body">Peça à Mika para abrir um aplicativo ou executar uma ação e veja a tela em tempo real em tamanho máximo.</string>
     <string name="live_stage_preparing">Iniciando tela virtual ao vivo…</string>
-    <string name="live_stage_touch_on">Toque</string>
-    <string name="live_stage_touch_off">Zoom</string>
-    <string name="live_stage_view_chat">Chat</string>
-    <string name="live_stage_view_screen">Tela</string>
-    <string name="live_stage_using_web">Navegador web</string>
-    <string name="live_stage_back">Voltar na tela virtual</string>
     <string name="live_stage_snapshot_wake">Tela pausada · Toque para retomar</string>
 
     <string name="role_live_voice">Modelo de chamada de voz</string>

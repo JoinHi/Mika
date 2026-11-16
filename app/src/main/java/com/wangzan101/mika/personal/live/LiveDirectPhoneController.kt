@@ -155,6 +155,7 @@ class LiveDirectPhoneController internal constructor(
     data class PendingDirectConfirmation(
         val id: Int,
         val request: ConfirmationRequest,
+        val gateToken: ConfirmationRequest = request,
         val appLabel: String,
         val matchedText: String,
         val toolName: String,
@@ -223,6 +224,7 @@ class LiveDirectPhoneController internal constructor(
         val syncPreview: suspend () -> Unit,
         val passGate: suspend () -> Unit,
         val selfPackage: String,
+        val fallbackPackageProvider: () -> String? = { null },
     ) {
         private val unlockedPackages = HashSet<String>()
         private val deliveredGuidePackages = HashSet<String>()
@@ -312,8 +314,18 @@ class LiveDirectPhoneController internal constructor(
             selfPackage = selfPackage,
             autonomous = false,
             pacing = pacing,
-            risks = LiveDirectConfirmation.riskJudge,
+            risks = LiveDirectConfirmation.riskJudge(confirmations) {
+                screen.target.value?.packageName ?: fallbackPackageProvider()
+            },
         )
+    }
+
+    private suspend inline fun <T> runSuspendOrNull(block: () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
     }
 
     private val mutex = Mutex()
@@ -328,9 +340,6 @@ class LiveDirectPhoneController internal constructor(
     private var pendingTurnGuardReset: Boolean = false
     private var idleJob: Job? = null
     private var touchReleaseJob: Job? = null
-
-    @Volatile
-    private var yieldRequested: Boolean = false
 
     private val userTouching = MutableStateFlow(false)
 
@@ -364,12 +373,10 @@ class LiveDirectPhoneController internal constructor(
         scope.launch {
             app.taskState.runs.collect { runs ->
                 if (runs.isNotEmpty()) {
-                    yieldRequested = true
-                    if (session != null && !mutex.isLocked) {
+                    cancelInFlightAct()
+                    if (session != null) {
                         release()
                     }
-                } else {
-                    yieldRequested = false
                 }
             }
         }
@@ -489,9 +496,7 @@ class LiveDirectPhoneController internal constructor(
         return try {
             mutex.withLock {
                 currentCoroutineContext().ensureActive()
-                val taskBusy = app.taskState.runs.value.isNotEmpty()
-                yieldRequested = taskBusy
-                if (taskBusy) {
+                if (app.taskState.runs.value.isNotEmpty()) {
                     closeSessionLocked()
                     return@withLock statusEarly(
                         startedMs,
@@ -521,9 +526,7 @@ class LiveDirectPhoneController internal constructor(
                 } finally {
                     _stepProgress.value = null
                     _activating.value = false
-                    val nowTaskBusy = app.taskState.runs.value.isNotEmpty()
-                    yieldRequested = nowTaskBusy
-                    if (nowTaskBusy || (app.teachReady && app.teach.blocksTasks())) {
+                    if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
                         closeSessionLocked()
                     } else {
                         scheduleIdleRelease()
@@ -569,9 +572,7 @@ class LiveDirectPhoneController internal constructor(
         return try {
             mutex.withLock {
                 currentCoroutineContext().ensureActive()
-                val taskBusy = app.taskState.runs.value.isNotEmpty()
-                yieldRequested = taskBusy
-                if (taskBusy) {
+                if (app.taskState.runs.value.isNotEmpty()) {
                     closeSessionLocked()
                     return@withLock statusEarly(startedMs, 0, "task_running", "当前已有后台任务启动，直控已让出手机屏幕。")
                 }
@@ -590,9 +591,7 @@ class LiveDirectPhoneController internal constructor(
                 } finally {
                     _stepProgress.value = null
                     _activating.value = false
-                    val nowTaskBusy = app.taskState.runs.value.isNotEmpty()
-                    yieldRequested = nowTaskBusy
-                    if (nowTaskBusy || (app.teachReady && app.teach.blocksTasks())) {
+                    if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
                         closeSessionLocked()
                     } else {
                         scheduleIdleRelease()
@@ -625,10 +624,23 @@ class LiveDirectPhoneController internal constructor(
         if (app.taskState.runs.value.isNotEmpty()) {
             return statusEarly(startedMs, 1, "task_running", "当前已有后台任务正在占用手机屏幕。")
         }
-        return mutex.withLock {
-            currentCoroutineContext().ensureActive()
-            val warm = try {
-                ensureSessionLocked()
+        val myJob = currentCoroutineContext()[Job]
+        synchronized(activeActLock) {
+            if (activeActJob == null) activeActJob = myJob
+        }
+        return try {
+            mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                if (app.taskState.runs.value.isNotEmpty()) {
+                    closeSessionLocked()
+                    return@withLock statusEarly(startedMs, 1, "task_running", "当前已有后台任务启动，直控已让出手机屏幕。")
+                }
+                if (app.teachReady && app.teach.blocksTasks()) {
+                    closeSessionLocked()
+                    return@withLock statusEarly(startedMs, 1, "teach_active", "当前正在进行人工示范录制，无法同时执行操作。")
+                }
+                val warm = try {
+                    ensureSessionLocked()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PhoneUnavailable) {
@@ -694,11 +706,18 @@ class LiveDirectPhoneController internal constructor(
                     }
                     is ActionOutcome.Cancelled -> failEarly(startedMs, 1, "cancelled", "操作已取消。")
                 }
-            } finally {
-                if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
-                    closeSessionLocked()
-                } else {
-                    scheduleIdleRelease()
+                } finally {
+                    if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
+                        closeSessionLocked()
+                    } else {
+                        scheduleIdleRelease()
+                    }
+                }
+            }
+        } finally {
+            synchronized(activeActLock) {
+                if (activeActJob === myJob) {
+                    activeActJob = null
                 }
             }
         }
@@ -718,7 +737,7 @@ class LiveDirectPhoneController internal constructor(
                 return@withLock failEarly(startedMs, 1, "phone_session_closed", "直控会话已结束，请重新发起操作。")
             }
             val step = stepSeq.incrementAndGet()
-            if (!LiveDirectConfirmation.grantOnce(warm.confirmations, pending.request.action, step)) {
+            if (!LiveDirectConfirmation.grantOnce(warm.confirmations, pending.gateToken, step)) {
                 return@withLock statusEarly(
                     startedMs,
                     1,
@@ -746,12 +765,12 @@ class LiveDirectPhoneController internal constructor(
                 } finally {
                     warm.confirmations.reset()
                 }
-                val readOutcome = runCatching {
+                val readOutcome = runSuspendOrNull {
                     warm.executor.run(
                         Part.ToolCall("live_confirm_${pending.id}_read", "phone_list_elements", "{}"),
                         Origin.Batch(stepSeq.incrementAndGet()),
                     )
-                }.getOrNull()
+                }
                 syncDisplayStateLocked(warm)
                 val elapsed = SystemClock.elapsedRealtime() - startedMs
                 val finalScreen = (readOutcome as? ActionOutcome.Ran)?.exec?.content?.takeIf { it["ok"] == JsonPrimitive(true) }
@@ -803,9 +822,7 @@ class LiveDirectPhoneController internal constructor(
                 }
             } finally {
                 _activating.value = false
-                val nowTaskBusy = app.taskState.runs.value.isNotEmpty()
-                yieldRequested = nowTaskBusy
-                if (nowTaskBusy) {
+                if (app.taskState.runs.value.isNotEmpty() || (app.teachReady && app.teach.blocksTasks())) {
                     closeSessionLocked()
                 } else {
                     scheduleIdleRelease()
@@ -846,6 +863,10 @@ class LiveDirectPhoneController internal constructor(
     private fun onUserTouchMotion(maskedAction: Int) {
         when (maskedAction) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_MOVE -> {
+                if (maskedAction == MotionEvent.ACTION_DOWN && _pendingConfirmation.value != null) {
+                    _pendingConfirmation.value = null
+                    session?.confirmations?.reset()
+                }
                 touchReleaseJob?.cancel()
                 userTouching.value = true
             }
@@ -865,6 +886,10 @@ class LiveDirectPhoneController internal constructor(
 
     @Synchronized
     private fun onUserDiscreteTouch() {
+        if (_pendingConfirmation.value != null) {
+            _pendingConfirmation.value = null
+            session?.confirmations?.reset()
+        }
         touchReleaseJob?.cancel()
         userTouching.value = true
         touchReleaseJob = scope.launch {
@@ -1168,12 +1193,12 @@ class LiveDirectPhoneController internal constructor(
 
         currentCoroutineContext().ensureActive()
         if (!skipFinalRead && warm.shell.asBinder().isBinderAlive) {
-            val readOut = runCatching {
+            val readOut = runSuspendOrNull {
                 executor.run(
                     Part.ToolCall("live_${callTag}_final_read", "phone_list_elements", "{}"),
                     Origin.Batch(stepSeq.incrementAndGet()),
                 )
-            }.getOrNull()
+            }
             val readContent = (readOut as? ActionOutcome.Ran)?.exec?.content
             if (readContent?.get("ok") == JsonPrimitive(true)) {
                 finalScreen = readContent
@@ -1315,7 +1340,9 @@ class LiveDirectPhoneController internal constructor(
             return ReplayAttempt.NotApplicable
         }
         val choice: RouteChoice = withTimeoutOrNull(LIVE_ROUTE_MATCH_TIMEOUT_MS) {
-            withContext(Dispatchers.IO) { runCatching { matcher.choose(goal) }.getOrNull() }
+            withContext(Dispatchers.IO) {
+                runSuspendOrNull { matcher.choose(goal) }
+            }
         } ?: return ReplayAttempt.NotApplicable
 
         choice.route.packages.forEach { warm.unlockPackageLinks(it) }
@@ -1377,12 +1404,12 @@ class LiveDirectPhoneController internal constructor(
         return when (out) {
             is ReplayOutcome.Completed -> {
                 repeat(out.done) { idx -> recordCompletedStep(callTag, idx, choice.route.steps[idx].tool) }
-                val readOut = runCatching {
+                val readOut = runSuspendOrNull {
                     warm.executor.run(
                         Part.ToolCall("live_${callTag}_replay_read", "phone_list_elements", "{}"),
                         Origin.Batch(stepSeq.incrementAndGet()),
                     )
-                }.getOrNull()
+                }
                 val finalScreen = (readOut as? ActionOutcome.Ran)?.exec?.content?.takeIf { it["ok"] == JsonPrimitive(true) }
                 syncDisplayStateLocked(warm)
                 val elapsed = SystemClock.elapsedRealtime() - startedMs
@@ -1690,12 +1717,12 @@ class LiveDirectPhoneController internal constructor(
                     allowTapToFocusFallback = op == "type",
                 )
                 val screenCandidates = if (fullContent["truncated"] == JsonPrimitive(true)) {
-                    val listOut = runCatching {
+                    val listOut = runSuspendOrNull {
                         executor.run(
                             Part.ToolCall("live_${callTag}_${index + 1}_list_all", "phone_list_elements", "{}"),
                             Origin.Script(stepSeq.incrementAndGet()),
                         )
-                    }.getOrNull()
+                    }
                     val listContent = (listOut as? ActionOutcome.Ran)?.exec?.content
                     if (listContent?.get("ok") == JsonPrimitive(true)) {
                         (listContent["snapshotId"] as? JsonPrimitive)?.contentOrNull?.let { fullSid = it }
@@ -1759,9 +1786,9 @@ class LiveDirectPhoneController internal constructor(
     ): Boolean {
         if (hasTextOnScreen(executor, callTag, index, text) == present) return true
         if (timeoutMs <= 0) return false
-        return runCatching {
+        return runSuspendOrNull {
             warm.privateScreen.waitFor(if (present) "appear" else "disappear", text, timeoutMs.toLong())
-        }.getOrDefault(false)
+        } ?: false
     }
 
     private suspend fun handleRefusedStep(
@@ -1780,14 +1807,16 @@ class LiveDirectPhoneController internal constructor(
                 return "payment_requires_user_touch" to
                     "已停在支付步骤（${hit.matched}）。支付与验密步骤不接受口头或自动放行，请提醒机主直接在实时画面上亲手点击完成。"
             }
-            val snap = runCatching { warm.privateScreen.peek() }.getOrNull()
+            val snap = runSuspendOrNull { warm.privateScreen.peek() }
             val typing = if (toolName == "phone_type_text") toolArgs.string("text") else null
             val fallbackPkg = warm.screen.target.value?.packageName ?: _foregroundPackage.value
             val req = LiveDirectConfirmation.buildRequest(hit, snap, typing, fallbackApp = fallbackPkg)
-            if (req != null) {
+            val gateToken = LiveDirectConfirmation.buildGateToken(hit, snap, fallbackApp = fallbackPkg)
+            if (req != null && gateToken != null) {
                 val card = PendingDirectConfirmation(
                     id = confirmSeq.incrementAndGet(),
                     request = req,
+                    gateToken = gateToken,
                     appLabel = ConfirmationNotifier.appLabel(app, req.app),
                     matchedText = hit.matched,
                     toolName = toolName,
@@ -1831,9 +1860,9 @@ class LiveDirectPhoneController internal constructor(
         val warm = session ?: return null
         if (warm.display.current == null || !warm.shell.asBinder().isBinderAlive) return null
         return withContext(Dispatchers.IO) {
-            runCatching { warm.screen.waitStable(600L) }
+            runSuspendOrNull { warm.screen.waitStable(600L) }
             if (warm.privateScreen.imagesPrivate) return@withContext null
-            val snap = runCatching { warm.privateScreen.peek() }.getOrNull()
+            val snap = runSuspendOrNull { warm.privateScreen.peek() }
             val targetPkg = snap?.packageName ?: warm.screen.target.value?.packageName
             if (!targetPkg.isNullOrBlank()) {
                 _foregroundPackage.value = targetPkg
@@ -1868,8 +1897,8 @@ class LiveDirectPhoneController internal constructor(
                     jpegFrame = null,
                 )
             }
-            val snap = runCatching { warm.privateScreen.peek() }.getOrNull()
-            if (snap?.protected == true) {
+            val snap = runSuspendOrNull { warm.privateScreen.peek() }
+            if (snap?.protected == true || snap?.captureError == "display_capture_unavailable") {
                 return@withContext DirectStageObservation(
                     appLabel = label,
                     screenText = "",
@@ -1891,9 +1920,7 @@ class LiveDirectPhoneController internal constructor(
 
     private suspend fun passDirectGate(warm: WarmSession) {
         currentCoroutineContext().ensureActive()
-        val taskBusy = app.taskState.runs.value.isNotEmpty()
-        yieldRequested = taskBusy
-        if (taskBusy) {
+        if (app.taskState.runs.value.isNotEmpty()) {
             throw DirectGateStopException("task_running", "后台任务已启动，直控已自动让出手机资源。")
         }
         if (app.teachReady && app.teach.blocksTasks()) {
@@ -2263,6 +2290,7 @@ class LiveDirectPhoneController internal constructor(
                 syncPreview = ::syncPreviewNow,
                 passGate = { passDirectGate(warmRef) },
                 selfPackage = app.packageName,
+                fallbackPackageProvider = { _foregroundPackage.value },
             )
             session = warmRef
             return warmRef
@@ -2270,7 +2298,6 @@ class LiveDirectPhoneController internal constructor(
             sideScope.cancel()
             watcher?.close()
             smsPrivacy?.close()
-            if (registeredOwner) app.resources.unregisterExternalOwner(runKey)
             _previewFrames.value = null
             _pipInput.value = null
             _foregroundApp.value = null
@@ -2289,6 +2316,7 @@ class LiveDirectPhoneController internal constructor(
                     resources.close()
                 }
             }
+            if (registeredOwner) app.resources.unregisterExternalOwner(runKey)
             if (connection != null) phoneServices.sharedShell.release()
             throw t
         }
@@ -2301,7 +2329,6 @@ class LiveDirectPhoneController internal constructor(
         current.sideScope.cancel()
         current.watcher.close()
         current.privateScreen.close()
-        app.resources.unregisterExternalOwner(current.key)
         _previewFrames.value = null
         _pipInput.value = null
         _foregroundApp.value = null
@@ -2323,6 +2350,7 @@ class LiveDirectPhoneController internal constructor(
                 }
             } finally {
                 current.resources.close()
+                app.resources.unregisterExternalOwner(current.key)
             }
         }
         phoneServices.sharedShell.release()
@@ -2339,7 +2367,7 @@ class LiveDirectPhoneController internal constructor(
             false
         }
         if (!allowed) return null
-        val bmp = warm.display.current?.let { it.frames.value ?: it.refreshPreviewFrame() } ?: return null
+        val bmp = warm.screen.servablePreviewBitmap() ?: return null
         return withContext(Dispatchers.IO) {
             runCatching { compressBitmapJpeg(bmp) }.getOrNull()
         }
@@ -2424,15 +2452,23 @@ class LiveDirectPhoneController internal constructor(
             normXs: FloatArray,
             normYs: FloatArray,
         ): Boolean {
-            if (isLocked()) return false
-            if (pointerIds.isEmpty() || pointerIds.size != normXs.size || pointerIds.size != normYs.size) return false
-            onMotion(action and MotionEvent.ACTION_MASK)
+            val masked = action and MotionEvent.ACTION_MASK
+            val isReleaseOrCancel = masked == MotionEvent.ACTION_UP || masked == MotionEvent.ACTION_CANCEL
+            if (isLocked() && !isReleaseOrCancel) return false
+            if (pointerIds.isEmpty() || pointerIds.size != normXs.size || pointerIds.size != normYs.size) {
+                if (isReleaseOrCancel) onMotion(masked)
+                return false
+            }
             val n = pointerIds.size
             val px = FloatArray(n) { scaleTouchToDisplay(normXs[it], display.width) }
             val py = FloatArray(n) { scaleTouchToDisplay(normYs[it], display.height) }
-            return runCatching {
+            val ok = runCatching {
                 shell.injectTouchEvent(display.displayId, action, downTime, eventTime, pointerIds, px, py)
             }.getOrDefault(false)
+            if (ok || isReleaseOrCancel) {
+                onMotion(masked)
+            }
+            return ok
         }
 
         override suspend fun tap(fx: Float, fy: Float) {

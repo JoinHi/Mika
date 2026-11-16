@@ -128,6 +128,15 @@ class PersonalAgent(
         return msg
     }
 
+    /** Updates an already-persisted Live user bubble in-place when trailing streaming ASR chunks finish the sentence. */
+    fun updateLiveUserMessage(id: String, text: String) {
+        val clean = text.trim()
+        if (id.isBlank() || clean.isEmpty()) return
+        store.update { s ->
+            s.copy(messages = s.messages.map { m -> if (m.id == id && m.role == "user") m.copy(text = clean.take(30_000)) else m })
+        }
+    }
+
     fun startLiveTask(title: String, goal: String, sourceId: String? = null): PersonalTask {
         val cleanGoal = goal.trim()
         if (cleanGoal.isBlank() || cleanGoal.length > 12_000) {
@@ -139,7 +148,7 @@ class PersonalAgent(
         store.update { s ->
             val resolvedSourceId = sourceId ?: s.messages.lastOrNull { it.role == "user" }?.id ?: "live"
             val dup = s.tasks.find {
-                it.goal == cleanGoal && (!it.terminal || (resolvedSourceId != "live" && it.sourceId == resolvedSourceId))
+                !it.terminal && it.goal == cleanGoal
             }
             if (dup != null) {
                 existing = dup
@@ -181,7 +190,13 @@ class PersonalAgent(
         return if (task.terminal) "任务已经结束。" else actions.cancel(task.conversationId)
     }
 
-    fun rememberFromLive(text: String, quote: String): String = actions.remember(text.trim(), quote)
+    fun rememberFromLive(text: String, quote: String): String {
+        val clean = text.trim()
+        if (clean.isBlank()) {
+            throw PersonalSystemException("empty_memory", "需要记住的内容不能为空。")
+        }
+        return actions.remember(clean, quote)
+    }
 
     fun recallHistoryFromLive(query: String): String {
         val clean = query.trim()

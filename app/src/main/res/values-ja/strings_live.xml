@@ -18,23 +18,13 @@
     <string name="live_action_unmute">ミュート解除</string>
     <string name="live_action_hangup">終了</string>
     <string name="live_action_share_screen">現在の画面を共有</string>
-    <string name="live_action_type_message">キーボード入力</string>
-    <string name="live_action_back_to_voice">音声バーに戻る</string>
-    <string name="live_action_settings">音声設定</string>
 
     <string name="live_you_prefix">あなた：%1$s</string>
     <string name="live_mika_prefix">Mika：%1$s</string>
 
-    <string name="live_settings_title">Mika Live リアルタイム音声</string>
-    <string name="live_settings_subtitle">Gemini Live ネイティブ音声による全二重対話とスマホ操作</string>
     <string name="live_settings_provider_label">Gemini プロバイダー</string>
-    <string name="live_settings_no_gemini_body">API キー付きの Gemini プロバイダーがまだ設定されていません。先にモデル設定で Gemini API キーを追加してください。</string>
-    <string name="live_settings_open_models">モデル設定を開く</string>
     <string name="live_settings_voice_label">ボイス</string>
     <string name="live_settings_model_label">ライブ音声モデル</string>
-    <string name="live_settings_refresh_models">更新</string>
-    <string name="live_settings_start_now">Mika Live を開始</string>
-    <string name="live_settings_reconnect_apply">再接続して反映</string>
 
     <string name="live_error_mic_permission">Mika Live の音声対話にはマイク権限が必要です。</string>
     <string name="live_error_no_gemini_key">先にモデル設定で Gemini API キーを設定してください。</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">共有したいアプリに切り替え、ユーザー補助と画面共有の設定を確認してください。</string>
     <string name="live_hint_idle_hangup">3分間無音で実行中のタスクがないため、Mika Live を自動終了しました。</string>
 
-    <string name="live_hint_direct_elapsed">⚡ 高速ダイレクト · %1$d ステップ %2$ss</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ タスク完了 %1$ss</string>
-
     <string name="live_stage_idle_title">ライブ仮想画面 待機中</string>
     <string name="live_stage_idle_body">Mika に開きたいアプリや操作を話しかけると、ここにリアルタイム画面が大きく表示されます</string>
     <string name="live_stage_preparing">ライブ仮想画面を起動中…</string>
-    <string name="live_stage_touch_on">タッチ操作</string>
-    <string name="live_stage_touch_off">ズーム</string>
-    <string name="live_stage_view_chat">チャット</string>
-    <string name="live_stage_view_screen">ライブ画面</string>
-    <string name="live_stage_using_web">ブラウザ</string>
-    <string name="live_stage_back">仮想画面で戻る</string>
     <string name="live_stage_snapshot_wake">画面休止中 · タップして操作を再開</string>
 
     <string name="role_live_voice">音声通話モデル</string>

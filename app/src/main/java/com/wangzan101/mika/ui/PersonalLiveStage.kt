@@ -36,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,9 +65,11 @@ import com.wangzan101.mika.R
 import com.wangzan101.mika.core.personal.PersonalTask
 import com.wangzan101.mika.personal.LiveScreenStageState
 import com.wangzan101.mika.personal.displayDetail
+import com.wangzan101.mika.personal.live.LiveAudioLevels
 import com.wangzan101.mika.personal.live.LiveSessionPhase
 import com.wangzan101.mika.personal.live.PersonalLiveUiState
 import com.wangzan101.mika.ui.components.BarIconButton
+import com.wangzan101.mika.ui.components.DirectionalIcon
 import com.wangzan101.mika.ui.components.MikaLogo
 import com.wangzan101.mika.ui.components.floatShadow
 import com.wangzan101.mika.ui.theme.MikaIcons
@@ -75,6 +78,7 @@ import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.MikaType
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlinx.coroutines.flow.StateFlow
 
 private enum class DynamicPillMode {
     Connecting,
@@ -104,6 +108,7 @@ internal fun PersonalLiveDynamicTopBar(
     onOpenDrawer: () -> Unit,
     onOpenActivity: () -> Unit,
     onOpenTask: (PersonalTask) -> Unit,
+    audioLevels: StateFlow<LiveAudioLevels>? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = MikaTheme.colors
@@ -217,8 +222,9 @@ internal fun PersonalLiveDynamicTopBar(
                         Box(Modifier.size(7.dp).background(c.warn, CircleShape))
                     }
                     DynamicPillMode.Speaking -> {
+                        val levels = audioLevels?.collectAsState()?.value
                         MiniPillWave(
-                            level = liveState.outputLevel,
+                            level = levels?.outputLevel ?: liveState.outputLevel,
                             reduceMotion = reduceMotion,
                             color = c.ok,
                         )
@@ -239,7 +245,7 @@ internal fun PersonalLiveDynamicTopBar(
                 )
 
                 if (primaryTask != null) {
-                    Icon(MikaIcons.Chevron, null, Modifier.size(12.dp), tint = c.ink3)
+                    DirectionalIcon(MikaIcons.Chevron, null, Modifier.size(12.dp), tint = c.ink3)
                 }
             }
         }
@@ -288,6 +294,7 @@ internal fun PersonalLiveScreenStage(
     touchOperate: Boolean,
     reduceMotion: Boolean,
     onWakeRetainedStage: () -> Unit = {},
+    audioLevels: StateFlow<LiveAudioLevels>? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = MikaTheme.colors
@@ -321,21 +328,23 @@ internal fun PersonalLiveScreenStage(
 
             var scale by remember { mutableFloatStateOf(1f) }
             var offset by remember { mutableStateOf(Offset.Zero) }
-            LaunchedEffect(touchOperate) {
-                if (touchOperate) {
+            val activeInput = stage.pipInput.takeIf { touchOperate }
+            LaunchedEffect(touchOperate, activeInput != null) {
+                if (touchOperate && activeInput != null) {
                     scale = 1f
                     offset = Offset.Zero
                 }
             }
             val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-                if (!touchOperate) {
+                if (activeInput == null) {
                     val nextScale = (scale * zoomChange).coerceIn(1f, 5f)
                     scale = nextScale
                     offset = if (nextScale <= 1.01f) Offset.Zero else offset + panChange
                 }
             }
-            val activeInput = stage.pipInput.takeIf { touchOperate }
             val canWakeSnapshot = stage.isRetainedSnapshot && touchOperate
+            val renderScale = if (activeInput != null) 1f else scale
+            val renderOffset = if (activeInput != null) Offset.Zero else offset
             val imageBitmap = remember(frame) { frame.asImageBitmap() }
 
             Box(
@@ -376,10 +385,10 @@ internal fun PersonalLiveScreenStage(
                     bitmap = imageBitmap,
                     contentDescription = stringResource(R.string.personal_replay_live_screen),
                     modifier = Modifier.fillMaxSize().graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offset.x,
-                        translationY = offset.y,
+                        scaleX = renderScale,
+                        scaleY = renderScale,
+                        translationX = renderOffset.x,
+                        translationY = renderOffset.y,
                     ),
                     contentScale = ContentScale.Fit,
                 )
@@ -434,8 +443,11 @@ internal fun PersonalLiveScreenStage(
                             )
                         }
                     } else {
+                        val levels = audioLevels?.collectAsState()?.value
+                        val inLvl = levels?.inputLevel ?: liveState.inputLevel
+                        val outLvl = levels?.outputLevel ?: liveState.outputLevel
                         MikaLiveBreathingOrb(
-                            audioLevel = maxOf(liveState.inputLevel, liveState.outputLevel),
+                            audioLevel = maxOf(inLvl, outLvl),
                             speaking = liveState.speaking,
                             reduceMotion = reduceMotion,
                         )

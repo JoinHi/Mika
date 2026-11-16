@@ -147,6 +147,15 @@ class PersonalRuntime(private val app: MikaApp) {
                     )
                 }
             }
+            val extendedFlow = live.extendedPendingConfirmation.map { pending ->
+                pending?.let {
+                    LiveConfirmationPrompt(
+                        source = LiveConfirmationSource.Extended(it.id),
+                        request = it.request,
+                        appLabel = it.appLabel,
+                    )
+                }
+            }
             val taskFlows = conversationIds.mapNotNull { convId ->
                 val run = runs.firstOrNull { it.conversationId == convId } ?: return@mapNotNull null
                 run.state.map { rs ->
@@ -163,7 +172,7 @@ class PersonalRuntime(private val app: MikaApp) {
                     )
                 }
             }
-            combine(listOf(directFlow) + taskFlows) { prompts -> prompts.firstOrNull { it != null } }
+            combine(listOf(directFlow, extendedFlow) + taskFlows) { prompts -> prompts.firstOrNull { it != null } }
         }
 
     private suspend fun captureTaskGuidance(run: TaskRun): LiveUserTouchCoordinator.CapturedGuidanceState? {
@@ -191,14 +200,18 @@ class PersonalRuntime(private val app: MikaApp) {
             normXs: FloatArray,
             normYs: FloatArray,
         ): Boolean {
+            val masked = action and MotionEvent.ACTION_MASK
             val ok = base.injectTouch(action, downTime, eventTime, pointerIds, normXs, normYs)
-            if (ok && live.isSessionActive) {
+            val isReleaseOrCancel = masked == MotionEvent.ACTION_UP || masked == MotionEvent.ACTION_CANCEL
+            if (live.isSessionActive && (ok || isReleaseOrCancel)) {
                 live.onTaskStageTouchMotion(
-                    maskedAction = action and MotionEvent.ACTION_MASK,
+                    maskedAction = masked,
                     pauseDuringGesture = { run.setStageTouchHold(true) },
                     resumeAfterGesture = { run.setStageTouchHold(false) },
                     captureAfterSettle = { captureTaskGuidance(run) },
                 )
+            } else if (isReleaseOrCancel) {
+                run.setStageTouchHold(false)
             }
             return ok
         }

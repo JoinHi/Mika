@@ -1,7 +1,9 @@
 package com.wangzan101.mika.personal.live
 
+import com.wangzan101.mika.R
 import com.wangzan101.mika.core.live.GeminiLiveModels
 import com.wangzan101.mika.core.live.GeminiLiveProtocol
+import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.settings.Provider
 import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderStore
@@ -63,8 +65,12 @@ class PersonalLiveSettings(private val file: File) {
 
     fun resolveCandidateProvider(store: ProviderStore, providerIdOverride: String? = null): Provider? {
         val candidates = geminiProviders(store)
-        val targetId = providerIdOverride?.takeIf { it.isNotBlank() } ?: _state.value.providerId
-        return candidates.firstOrNull { it.id == targetId } ?: candidates.firstOrNull()
+        val explicitId = providerIdOverride?.trim()?.takeIf { it.isNotEmpty() } ?: _state.value.providerId.trim()
+        return if (explicitId.isNotEmpty()) {
+            candidates.firstOrNull { it.id == explicitId }
+        } else {
+            candidates.firstOrNull()
+        }
     }
 
     fun resolve(store: ProviderStore): ResolvedLiveCredentials? {
@@ -87,9 +93,9 @@ class PersonalLiveSettings(private val file: File) {
 
     suspend fun refreshModels(store: ProviderStore, providerIdOverride: String? = null): Result<List<String>> = withContext(Dispatchers.IO) {
         val chosen = resolveCandidateProvider(store, providerIdOverride)
-            ?: return@withContext Result.failure(IllegalStateException("未配置可用的 Gemini 服务商与 API Key"))
+            ?: return@withContext Result.failure(IllegalStateException(tr(R.string.live_error_no_gemini_key)))
         val key = store.providerKey(chosen.id)?.takeIf { it.isNotBlank() }
-            ?: return@withContext Result.failure(IllegalStateException("未配置可用的 Gemini 服务商与 API Key"))
+            ?: return@withContext Result.failure(IllegalStateException(tr(R.string.live_error_no_gemini_key)))
         val baseUrl = chosen.baseUrl.ifBlank { "https://generativelanguage.googleapis.com" }
         val res = GeminiLiveModels.listBidiModels(
             baseUrl = baseUrl,

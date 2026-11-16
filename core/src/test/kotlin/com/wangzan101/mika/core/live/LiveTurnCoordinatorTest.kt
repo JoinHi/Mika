@@ -22,7 +22,8 @@ import org.junit.Test
 class LiveTurnCoordinatorTest {
 
     private class FakeRealtimeSession(
-        override val capabilities: LiveProviderCapabilities = LiveProviderCapabilities.DEFAULT_RICH,
+        override val capabilities: LiveProviderCapabilities = LiveProviderCapabilities.DEFAULT,
+        var allowContextSend: Boolean = true,
     ) : LiveRealtimeSession {
         override val events: Flow<GeminiLiveEvent> = emptyFlow()
         val videoJpegs = mutableListOf<ByteArray>()
@@ -36,6 +37,7 @@ class LiveTurnCoordinatorTest {
         }
         override fun sendUserText(text: String, turnComplete: Boolean): Boolean = true
         override fun sendContextUpdate(text: String, triggerResponse: Boolean): Boolean {
+            if (!allowContextSend) return false
             contextUpdates += text to triggerResponse
             return true
         }
@@ -180,7 +182,7 @@ class LiveTurnCoordinatorTest {
     fun coordinatorSuppressesVideoJpegWhenProviderDoesNotSupportVisualFrames() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = TestScope(dispatcher)
-        val audioOnlySession = FakeRealtimeSession(capabilities = LiveProviderCapabilities.VOLC_SIDECAR_ONLY)
+        val audioOnlySession = FakeRealtimeSession(capabilities = LiveProviderCapabilities(supportsVisualFrames = false))
         var nowMs = 10_000L
         val coordinator = LiveTurnCoordinator(
             scope = scope,
@@ -278,5 +280,19 @@ class LiveTurnCoordinatorTest {
         assertTrue(secondTrigger)
         assertFalse("Preempted stage goal event must be purged", secondPrompt.contains("搜乒乓球桌"))
         assertTrue(secondPrompt.contains("创建每天早上8点提醒"))
+        assertTrue("External payload must be wrapped in untrusted tags", secondPrompt.contains("<untrusted>") && secondPrompt.contains("</untrusted>"))
+
+        // 3. Transient sendContextUpdate failure retains queued events until session recovers
+        session.allowContextSend = false
+        coordinator.enqueue(LiveAsyncEvent.DeepThinkResult("t1", "推理题", "结论A"))
+        runCurrent()
+        assertEquals(2, session.contextUpdates.size)
+        assertTrue(coordinator.hasPendingEvents())
+
+        session.allowContextSend = true
+        advanceTimeBy(250L)
+        runCurrent()
+        assertEquals(3, session.contextUpdates.size)
+        assertTrue(session.contextUpdates[2].first.contains("结论A"))
     }
 }

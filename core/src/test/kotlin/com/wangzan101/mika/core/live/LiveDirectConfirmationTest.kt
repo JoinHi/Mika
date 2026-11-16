@@ -74,8 +74,9 @@ class LiveDirectConfirmationTest {
             height = 2400,
         )
         assertNull(LiveDirectConfirmation.buildRequest(Irreversible(IrrevAction.pay, "立即支付"), screen))
-        assertNull(LiveDirectConfirmation.grantToken(IrrevAction.pay))
-        assertFalse(LiveDirectConfirmation.grantOnce(ConfirmationGate(), IrrevAction.pay, step = 1))
+        assertNull(LiveDirectConfirmation.buildGateToken(Irreversible(IrrevAction.pay, "立即支付"), screen))
+        val bogusPayReq = com.wangzan101.mika.core.gate.ConfirmationRequest(IrrevAction.pay, "确认付款", "立即支付", "¥35.00", "com.eg.android.AlipayGphone")
+        assertFalse(LiveDirectConfirmation.grantOnce(ConfirmationGate(), bogusPayReq, step = 1))
     }
 
     @Test
@@ -156,7 +157,7 @@ class LiveDirectConfirmationTest {
             recorder = ActionRecorder(RunSink.NONE),
             approvals = ApprovalSettings.ASK,
             autonomous = false,
-            risks = LiveDirectConfirmation.riskJudge,
+            risks = LiveDirectConfirmation.riskJudge(gate),
         )
 
         // Prime ScreenMap via ActionExecutor
@@ -178,7 +179,8 @@ class LiveDirectConfirmationTest {
             assertTrue(screen.taps.isEmpty())
 
             // 2. Approving once executes this single step regardless of missing title/draft/amount
-            assertTrue(LiveDirectConfirmation.grantOnce(gate, expectedAction, step = 2))
+            val token = LiveDirectConfirmation.buildGateToken(firstAttempt.hit!!, screen.peek())!!
+            assertTrue(LiveDirectConfirmation.grantOnce(gate, token, step = 2))
             val approved = executor.run(call, Origin.Model(2))
             gate.reset()
             assertTrue("Expected Ran for $expectedAction but got $approved", approved is ActionOutcome.Ran)
@@ -195,7 +197,8 @@ class LiveDirectConfirmationTest {
             gate.reset()
             val afterDeclineBatch = executor.run(call, Origin.Batch(5)) as ActionOutcome.Refused
             assertEquals("confirmation_required", afterDeclineBatch.code)
-            assertTrue(LiveDirectConfirmation.grantOnce(gate, expectedAction, step = 6))
+            val token2 = LiveDirectConfirmation.buildGateToken(afterDeclineBatch.hit!!, screen.peek())!!
+            assertTrue(LiveDirectConfirmation.grantOnce(gate, token2, step = 6))
             val approvedAgain = executor.run(call, Origin.Model(6))
             gate.reset()
             assertTrue(approvedAgain is ActionOutcome.Ran)
@@ -210,6 +213,57 @@ class LiveDirectConfirmationTest {
         assertEquals(IrrevAction.pay, payBatch.hit?.action)
         val payModel = executor.run(payCall, Origin.Model(11)) as ActionOutcome.Refused
         assertEquals("confirmation_required", payModel.code)
+        assertTrue(screen.taps.isEmpty())
+    }
+
+    @Test
+    fun `grantOnce rejects TOCTOU changes to amount recipient draft app or disappearing button`() = runTest {
+        val screen = CustomScreen(
+            pkg = "com.sankuai.meituan",
+            elements = listOf(
+                el("@e1", "确认订单", bounds = listOf(300, 60, 700, 120)),
+                el("@e2", "合计 ¥28.50", bounds = listOf(80, 880, 480, 940)),
+                el("@e3", "提交订单", bounds = listOf(640, 870, 960, 950), clickable = true),
+            ),
+        )
+        val gate = ConfirmationGate()
+        val tools = toolDispatcher(screen)
+        val executor = ActionExecutor(
+            tools = tools,
+            guards = OperationGuards(),
+            confirmations = gate,
+            gate = {},
+            recorder = ActionRecorder(RunSink.NONE),
+            approvals = ApprovalSettings.ASK,
+            autonomous = false,
+            risks = LiveDirectConfirmation.riskJudge(gate),
+        )
+        assertTrue(executor.run(Part.ToolCall("obs", "phone_observe", "{}"), Origin.Batch(0)) is ActionOutcome.Ran)
+
+        val orderCall = Part.ToolCall("tap_order", "phone_tap", """{"x":800,"y":910}""")
+        val refused = executor.run(orderCall, Origin.Batch(1)) as ActionOutcome.Refused
+        assertEquals("confirmation_required", refused.code)
+        val approvedToken = LiveDirectConfirmation.buildGateToken(refused.hit!!, screen.peek())!!
+        assertEquals("¥28.50", approvedToken.amount)
+
+        // Price mutates from ¥28.50 -> ¥288.50 before user clicks Approve -> MUST refuse with confirmation_mismatch!
+        screen.elements = listOf(
+            el("@e1", "确认订单", bounds = listOf(300, 60, 700, 120)),
+            el("@e2", "合计 ¥288.50", bounds = listOf(80, 880, 480, 940)),
+            el("@e3", "提交订单", bounds = listOf(640, 870, 960, 950), clickable = true),
+        )
+        assertTrue(LiveDirectConfirmation.grantOnce(gate, approvedToken, step = 2))
+        val afterPriceJump = executor.run(orderCall, Origin.Model(2)) as ActionOutcome.Refused
+        assertEquals("confirmation_mismatch", afterPriceJump.code)
+        assertTrue(screen.taps.isEmpty())
+
+        // Button disappears and is covered by an unlabeled overlay at (800, 910) -> MUST refuse without blind tap!
+        screen.elements = listOf(
+            el("@e9", "", bounds = listOf(640, 870, 960, 950), clickable = true),
+        )
+        assertTrue(LiveDirectConfirmation.grantOnce(gate, approvedToken, step = 3))
+        val afterOverlay = executor.run(orderCall, Origin.Model(3)) as ActionOutcome.Refused
+        assertEquals("confirmation_mismatch", afterOverlay.code)
         assertTrue(screen.taps.isEmpty())
     }
 }

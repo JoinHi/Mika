@@ -203,16 +203,26 @@ class GeminiLiveProtocolTest {
             }
         """.trimIndent()
         val finishedEvents = GeminiLiveProtocol.parseServerFrame(finishedFrame)
-        assertTrue(finishedEvents.any { it is LiveSessionEvent.InputTranscriptDelta })
+        assertFalse("Finished frame must emit Completed without duplicate Delta", finishedEvents.any { it is LiveSessionEvent.InputTranscriptDelta })
         assertEquals(
             "帮我定明天早上七点闹钟",
             finishedEvents.filterIsInstance<LiveSessionEvent.InputTranscriptCompleted>().single().text,
         )
-        assertEquals(LiveToolTier.RICH_TOOLS, GeminiLiveProtocol.GEMINI_CAPABILITIES.toolTier)
+
+        val emptyFinishedFrame = """{"serverContent":{"inputTranscription":{"text":"","finished":true}}}"""
+        val emptyFinishedEvents = GeminiLiveProtocol.parseServerFrame(emptyFinishedFrame)
+        assertEquals(
+            "",
+            emptyFinishedEvents.filterIsInstance<LiveSessionEvent.InputTranscriptCompleted>().single().text,
+        )
+
         assertTrue(GeminiLiveProtocol.GEMINI_CAPABILITIES.supportsVisualFrames)
-        assertEquals(LiveToolTier.LITE_INTENT, LiveProviderCapabilities.QWEN_OMNI_LITE.toolTier)
-        assertEquals(LiveToolTier.SIDECAR_ONLY, LiveProviderCapabilities.VOLC_SIDECAR_ONLY.toolTier)
-        assertFalse(LiveProviderCapabilities.VOLC_SIDECAR_ONLY.supportsVisualFrames)
+        assertThrows(IllegalArgumentException::class.java) {
+            GeminiLiveProtocol.wsUrl("https://")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GeminiLiveProtocol.restBaseUrl("https://")
+        }
     }
 
     @Test
@@ -354,11 +364,52 @@ class GeminiLiveProtocolTest {
             assertEquals(task1.id, task2.id)
             assertEquals(1, startedTasks.size)
 
+            // Once task1 reaches terminal state, re-issuing the same goal in the same turn must start a fresh task
+            agent.updateTask(task1.id, "cancelled", result = "已取消")
+            val task3 = agent.startLiveTask("查看微信", "打开微信看看未读消息", sourceId = "src-1")
+            assertFalse(task1.id == task3.id)
+            assertEquals(2, startedTasks.size)
+
             assertThrows(PersonalSystemException::class.java) {
                 agent.reviseLiveTask("missing-id", "改成飞书")
             }
         } finally {
             scope.cancel()
+        }
+    }
+
+    @Test
+    fun illegalApiKeyAndHandshakeTimeoutFailCleanlyWithoutLeakingOrSwallowing(): Unit = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    // Intentionally never send setupComplete to simulate stalled handshake
+                }
+            }),
+        )
+        server.start()
+        try {
+            val baseUrl = "http://${server.hostName}:${server.port}"
+            val illegalRes = GeminiLiveModels.listBidiModels(baseUrl, "密钥：sk-abc\n123", OkHttpClient())
+            assertTrue(illegalRes.isFailure)
+            assertTrue(illegalRes.exceptionOrNull() is com.wangzan101.mika.core.model.ModelError.IllegalHeader)
+            assertEquals(0, server.requestCount)
+
+            assertThrows(com.wangzan101.mika.core.model.ModelError.IllegalHeader::class.java) {
+                runBlocking {
+                    GeminiLiveClient(http = OkHttpClient()).connect(baseUrl, "sk-\nabc", GeminiLiveSetup())
+                }
+            }
+            assertEquals(0, server.requestCount)
+
+            assertThrows(java.net.SocketTimeoutException::class.java) {
+                runBlocking {
+                    GeminiLiveClient(http = OkHttpClient(), connectTimeoutMs = 180L).connect(baseUrl, "valid-key", GeminiLiveSetup())
+                }
+            }
+        } finally {
+            server.shutdown()
         }
     }
 }

@@ -18,23 +18,13 @@
     <string name="live_action_unmute">Bunyikan</string>
     <string name="live_action_hangup">Akhiri</string>
     <string name="live_action_share_screen">Bagikan layar saat ini</string>
-    <string name="live_action_type_message">Ketik pesan</string>
-    <string name="live_action_back_to_voice">Bilah suara</string>
-    <string name="live_action_settings">Setelan suara</string>
 
     <string name="live_you_prefix">Anda: %1$s</string>
     <string name="live_mika_prefix">Mika: %1$s</string>
 
-    <string name="live_settings_title">Suara Mika Live</string>
-    <string name="live_settings_subtitle">Obrolan suara dua arah waktu nyata sambil mengendalikan ponsel dengan Gemini Live</string>
     <string name="live_settings_provider_label">Penyedia Gemini</string>
-    <string name="live_settings_no_gemini_body">Belum ada penyedia Gemini dengan kunci API yang dikonfigurasi. Tambahkan kunci API Gemini di Setelan Model terlebih dahulu.</string>
-    <string name="live_settings_open_models">Buka Setelan Model</string>
     <string name="live_settings_voice_label">Suara</string>
     <string name="live_settings_model_label">Model audio live</string>
-    <string name="live_settings_refresh_models">Muat ulang</string>
-    <string name="live_settings_start_now">Mulai Mika Live</string>
-    <string name="live_settings_reconnect_apply">Sambung ulang &amp; terapkan</string>
 
     <string name="live_error_mic_permission">Izin mikrofon diperlukan untuk obrolan suara Mika Live.</string>
     <string name="live_error_no_gemini_key">Silakan atur kunci API Gemini di Setelan Model terlebih dahulu.</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">Beralihlah ke aplikasi lain terlebih dahulu dan periksa layanan Aksesibilitas serta izin berbagi layar.</string>
     <string name="live_hint_idle_hangup">Mika Live berakhir otomatis setelah 3 menit hening.</string>
 
-    <string name="live_hint_direct_elapsed">⚡ Kontrol langsung · %1$d langkah dalam %2$s dtk</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ Tugas selesai dalam %1$s dtk</string>
-
     <string name="live_stage_idle_title">Layar virtual live siap</string>
     <string name="live_stage_idle_body">Ucapkan aplikasi atau tindakan kepada Mika dan layar virtual waktu nyata akan tampil penuh di sini.</string>
     <string name="live_stage_preparing">Memulai layar virtual live…</string>
-    <string name="live_stage_touch_on">Sentuh</string>
-    <string name="live_stage_touch_off">Zoom</string>
-    <string name="live_stage_view_chat">Chat</string>
-    <string name="live_stage_view_screen">Layar</string>
-    <string name="live_stage_using_web">Browser web</string>
-    <string name="live_stage_back">Kembali di layar virtual</string>
     <string name="live_stage_snapshot_wake">Layar dijeda · Ketuk untuk melanjutkan</string>
 
     <string name="role_live_voice">Model panggilan suara</string>

@@ -290,6 +290,42 @@ class VirtualScreenTouchTest {
     }
 
     @Test
+    fun systemCanceledPointerChangesNeverInjectPhantomDeferredTapAndEmitActionCancelWhenFlushed() {
+        // 1) System edge-back / 3-finger screenshot cancels pointer BEFORE HOLD_FLUSH_MS: must NOT emit isDeferredTap!
+        val quickCanceled = StreamTouchTracker(touchSlop = 24f)
+        quickCanceled.onDown(id = 1L, x = 20f, y = 600f, width = 540, height = 1200, downTimeMs = 1000L)
+        val preFlushOut = quickCanceled.onPointerEvent(
+            changes = listOf(PointerSample(id = 1L, x = 28f, y = 600f, pressed = false, canceled = true)),
+            width = 540,
+            height = 1200,
+            eventTimeMs = 1035L,
+        )
+        assertTrue("Canceled pre-flush gesture must never inject phantom tap", preFlushOut.isEmpty())
+        assertFalse(quickCanceled.hasActivePointers)
+
+        // 2) System gesture cancels pointer AFTER drag unlocked: must emit ACTION_CANCEL instead of ACTION_UP!
+        val dragCanceled = StreamTouchTracker(touchSlop = 20f)
+        dragCanceled.onDown(id = 2L, x = 250f, y = 500f, width = 500, height = 1000, downTimeMs = 2000L)
+        val movePkts = dragCanceled.onPointerEvent(
+            changes = listOf(PointerSample(id = 2L, x = 250f, y = 540f, pressed = true)),
+            width = 500,
+            height = 1000,
+            eventTimeMs = 2020L,
+        )
+        assertEquals(2, movePkts.size)
+        val cancelOut = dragCanceled.onPointerEvent(
+            changes = listOf(PointerSample(id = 2L, x = 250f, y = 560f, pressed = false, canceled = true)),
+            width = 500,
+            height = 1000,
+            eventTimeMs = 2040L,
+        )
+        assertEquals(1, cancelOut.size)
+        assertEquals(MotionEvent.ACTION_CANCEL, cancelOut.single().action)
+        assertFalse(cancelOut.single().isDeferredTap)
+        assertFalse(dragCanceled.hasActivePointers)
+    }
+
+    @Test
     fun consumeTouchChannelWaitsForFocusSettleAndInjectsCleanDeferredTapPair() = runTest {
         val input = RecordingPipInput(streamingSupported = true)
         var clockMs = 1030L

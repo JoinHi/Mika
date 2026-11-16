@@ -18,23 +18,13 @@
     <string name="live_action_unmute">إلغاء الكتم</string>
     <string name="live_action_hangup">إنهاء</string>
     <string name="live_action_share_screen">مشاركة الشاشة الحالية</string>
-    <string name="live_action_type_message">كتابة رسالة</string>
-    <string name="live_action_back_to_voice">شريط الصوت</string>
-    <string name="live_action_settings">إعدادات الصوت</string>
 
     <string name="live_you_prefix">أنت: %1$s</string>
     <string name="live_mika_prefix">Mika: %1$s</string>
 
-    <string name="live_settings_title">Mika Live الصوتي</string>
-    <string name="live_settings_subtitle">محادثة صوتية فورية مزدوجة مع التحكم بالهاتف عبر Gemini Live</string>
     <string name="live_settings_provider_label">مزود Gemini</string>
-    <string name="live_settings_no_gemini_body">لم يتم إعداد مزود Gemini بمفتاح API بعد. أضف مفتاح Gemini API في إعدادات النماذج أولاً.</string>
-    <string name="live_settings_open_models">فتح إعدادات النماذج</string>
     <string name="live_settings_voice_label">الصوت</string>
     <string name="live_settings_model_label">نموذج الصوت المباشر</string>
-    <string name="live_settings_refresh_models">تحديث</string>
-    <string name="live_settings_start_now">بدء Mika Live</string>
-    <string name="live_settings_reconnect_apply">إعادة الاتصال للتطبيق</string>
 
     <string name="live_error_mic_permission">إذن الميكروفون مطلوب لاستخدام المحادثة الصوتية في Mika Live.</string>
     <string name="live_error_no_gemini_key">يرجى إعداد مفتاح Gemini API في إعدادات النماذج أولاً.</string>
@@ -44,18 +34,9 @@
     <string name="live_screen_unavailable">انتقل إلى تطبيق آخر أولاً وتأكد من تفعيل خدمة تسهيل الاستخدام ومشاركة الشاشة.</string>
     <string name="live_hint_idle_hangup">انتهت جلسة Mika Live تلقائياً بعد 3 دقائق من الصمت.</string>
 
-    <string name="live_hint_direct_elapsed">⚡ تحكم مباشر · %1$d خطوات خلال %2$s ث</string>
-    <string name="live_hint_task_turbo_elapsed">⚡ اكتملت المهمة خلال %1$s ث</string>
-
     <string name="live_stage_idle_title">الشاشة الافتراضية المباشرة جاهزة</string>
     <string name="live_stage_idle_body">اطلب من Mika فتح أي تطبيق أو تنفيذ إجراء وستظهر الشاشة المباشرة هنا بحجم كامل</string>
     <string name="live_stage_preparing">جارٍ تشغيل الشاشة الافتراضية المباشرة…</string>
-    <string name="live_stage_touch_on">لمس</string>
-    <string name="live_stage_touch_off">تكبير</string>
-    <string name="live_stage_view_chat">المحادثة</string>
-    <string name="live_stage_view_screen">الشاشة</string>
-    <string name="live_stage_using_web">متصفح الويب</string>
-    <string name="live_stage_back">رجوع في الشاشة الافتراضية</string>
     <string name="live_stage_snapshot_wake">الشاشة متوقفة مؤقتًا · انقر للمتابعة</string>
 
     <string name="role_live_voice">نموذج المكالمة الصوتية</string>

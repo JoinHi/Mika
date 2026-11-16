@@ -252,6 +252,13 @@ class AndroidScreen(
         display.current?.latestFramePng()
     }
 
+    /** 实时舞台发送给云端多模态语音模型前走同一套新鲜帧与黑屏防漏检查。 */
+    internal fun servablePreviewBitmap(): android.graphics.Bitmap? {
+        if (!hasDisplay || !frameServable() || frameBlack() == true) return null
+        val cur = display.current ?: return null
+        return cur.frames.value ?: cur.refreshPreviewFrame()
+    }
+
     /** 最近一次启动开始的单调时钟时刻（纳秒），与虚拟屏生产者的帧时间戳比较。 */
     @Volatile private var frameGuardSince: Long? = null
 

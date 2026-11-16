@@ -59,6 +59,12 @@ internal object LiveSmartPhoneRunner {
         "hand_to_user",
         "end_not_done",
         "do_steps",
+        "phone_system_command",
+        "phone_run",
+        "phone_sms_login",
+        "phone_share_text",
+        "phone_app_after_task",
+        "phone_calendar_bulk_insert",
     )
 
     private val ALLOWED_TOOL_PREFIXES = listOf("phone_", "knowledge_")
@@ -108,6 +114,7 @@ internal object LiveSmartPhoneRunner {
         val offeredTools: List<ToolSpec> = warm.dispatcher.offeredNow(all = true).filter { spec ->
             spec.name !in EXCLUDED_TOOL_NAMES && ALLOWED_TOOL_PREFIXES.any { spec.name.startsWith(it) }
         }
+        val allowedToolNames: Set<String> = offeredTools.mapTo(HashSet()) { it.name }
         val systemPrompt = buildSmartSystemPrompt(
             appKnowledgeBlock = appKnowledgeBlock,
             skillBlock = skillBlock,
@@ -132,12 +139,16 @@ internal object LiveSmartPhoneRunner {
         // 若虚拟屏上已有打开的应用，先附带一屏初始快照供第 1 步直接引用编号
         var lastScreenJson: JsonObject? = null
         if (warm.display.current != null && warm.appShown.value) {
-            val initRead = runCatching {
+            val initRead = try {
                 warm.executor.run(
                     Part.ToolCall("smart_${callTag}_init_read", "phone_list_elements", "{}"),
                     Origin.Batch(nextStepNum()),
                 )
-            }.getOrNull()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             val content = (initRead as? ActionOutcome.Ran)?.exec?.content
             if (content?.get("ok") == JsonPrimitive(true)) {
                 lastScreenJson = content
@@ -245,6 +256,15 @@ internal object LiveSmartPhoneRunner {
 
             for (call in finalCalls) {
                 currentCoroutineContext().ensureActive()
+                if (call.name !in allowedToolNames) {
+                    lastOk = false
+                    toolResults += Part.ToolResult(
+                        callId = call.id,
+                        content = """{"ok":false,"error":"tool_not_allowed","message":"该工具不在虚拟屏智能代理允许范围内，请改用标准界面操作工具。"}""",
+                        isError = true,
+                    )
+                    continue
+                }
                 val verb = warm.dispatcher.verb(call.name)
                 screenActionAttempted = screenActionAttempted || warm.dispatcher.writesScreen(call.name)
                 onStepProgress(call.name.removePrefix("phone_"), currentAppLabel ?: appName, step, maxSteps)

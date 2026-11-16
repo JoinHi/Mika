@@ -6,55 +6,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonObject
 
 /**
- * 实时语音模型的工具调用能力分级：
- * - [RICH_TOOLS]：原生支持多工具 + 结构化 JSON 参数 + 异步回执（如 Gemini Live、OpenAI Realtime）；
- * - [LITE_INTENT]：仅支持少量极简扁平单字符串参数工具，复杂推理与参数路由下沉给端侧 Jev / Light 模型（如千问 Qwen-Omni Realtime）；
- * - [SIDECAR_ONLY]：不向语音模型暴露工具（0 工具），语音模型专注自然全双工对话，端侧监听 [LiveSessionEvent.InputTranscriptCompleted]
- *   并通过本地快速规则 + Jev 意图旁路执行手机/工具动作后再注入播报上下文（如豆包实时语音大模型 VolcRealtime）。
+ * 实时全双工语音会话能力声明（当前由 [GeminiLiveClient] 提供 Gemini Live BidiGenerateContent 实现）。
  */
-enum class LiveToolTier {
-    RICH_TOOLS,
-    LITE_INTENT,
-    SIDECAR_ONLY,
-}
-
 data class LiveProviderCapabilities(
-    val toolTier: LiveToolTier = LiveToolTier.RICH_TOOLS,
     val supportsNonBlockingTools: Boolean = true,
     val supportsVisualFrames: Boolean = true,
     val supportsResumption: Boolean = true,
-    val inputSampleRateHz: Int = 16_000,
-    val outputSampleRateHz: Int = 24_000,
 ) {
     companion object {
-        val DEFAULT_RICH = LiveProviderCapabilities()
-
-        val OPENAI_REALTIME = LiveProviderCapabilities(
-            toolTier = LiveToolTier.RICH_TOOLS,
-            supportsNonBlockingTools = false,
-            supportsVisualFrames = false,
-            supportsResumption = false,
-            inputSampleRateHz = 24_000,
-            outputSampleRateHz = 24_000,
-        )
-
-        val QWEN_OMNI_LITE = LiveProviderCapabilities(
-            toolTier = LiveToolTier.LITE_INTENT,
-            supportsNonBlockingTools = false,
-            supportsVisualFrames = true,
-            supportsResumption = false,
-            inputSampleRateHz = 16_000,
-            outputSampleRateHz = 24_000,
-        )
-
-        val VOLC_SIDECAR_ONLY = LiveProviderCapabilities(
-            toolTier = LiveToolTier.SIDECAR_ONLY,
-            supportsNonBlockingTools = false,
-            supportsVisualFrames = false,
-            supportsResumption = false,
-            inputSampleRateHz = 16_000,
-            outputSampleRateHz = 24_000,
-        )
+        val DEFAULT = LiveProviderCapabilities()
     }
 }
 
@@ -110,7 +70,7 @@ sealed interface LiveSessionEvent {
 
     data class InputTranscriptDelta(val text: String) : LiveSessionEvent
 
-    /** 用户一句话的稳态 ASR 转写完成事件（供 [LiveToolTier.SIDECAR_ONLY] 旁路意图拦截及精确话轮归档使用）。 */
+    /** 用户一句话的稳态 ASR 转写完成事件（`text` 可能为空，代表流式增量结束边界）。 */
     data class InputTranscriptCompleted(val text: String) : LiveSessionEvent
 
     data class OutputTranscriptDelta(val text: String) : LiveSessionEvent
@@ -134,7 +94,7 @@ sealed interface LiveSessionEvent {
 
 interface LiveRealtimeSession : AutoCloseable {
     val capabilities: LiveProviderCapabilities
-        get() = LiveProviderCapabilities.DEFAULT_RICH
+        get() = LiveProviderCapabilities.DEFAULT
 
     val events: Flow<LiveSessionEvent>
 
@@ -143,9 +103,6 @@ interface LiveRealtimeSession : AutoCloseable {
     fun sendVideoJpeg(jpeg: ByteArray): Boolean
     fun sendUserText(text: String, turnComplete: Boolean = true): Boolean
     fun sendContextUpdate(text: String, triggerResponse: Boolean = false): Boolean
-
-    /** 主动取消当前正在生成的模型语音回复（供旁路接管话轮时抑制抢答）。 */
-    fun cancelCurrentResponse(): Boolean = false
 
     fun sendToolResponse(
         id: String,
@@ -164,10 +121,6 @@ interface LiveRealtimeSession : AutoCloseable {
     }
 
     override fun close()
-}
-
-fun interface LiveRealtimeConnector {
-    suspend fun connect(config: LiveSessionConfig): LiveRealtimeSession
 }
 
 typealias GeminiLiveSetup = LiveSessionConfig

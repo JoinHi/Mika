@@ -6,6 +6,7 @@ import com.wangzan101.mika.core.live.LiveTurnCoordinator
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -98,36 +99,47 @@ internal class LiveUserTouchCoordinator(
                 return
             }
             settleJob = scope.launch {
-                delay(debounceMs)
-                if (touching.get()) return@launch
-                val count = burstTouchCount.getAndSet(0).coerceAtLeast(1)
-                val resume = synchronized(lock) {
-                    val hook = pendingResumeHook
-                    pendingResumeHook = null
-                    hook
-                }
-                val captured = runCatching { captureAfterSettle() }.getOrNull()
-                resume?.invoke()
-                if (captured != null && (captured.screenSummary.isNotBlank() || captured.jpegFrame != null)) {
-                    val sig = "${captured.appLabel.orEmpty()}|${captured.screenSummary}"
-                    val shouldEmit = synchronized(lock) {
-                        if (captured.screenSummary.isNotBlank() && sig == lastSyncedSignature) {
-                            false
-                        } else {
-                            lastSyncedSignature = sig
-                            true
+                try {
+                    delay(debounceMs)
+                    if (touching.get()) return@launch
+                    val count = burstTouchCount.getAndSet(0).coerceAtLeast(1)
+                    val captured = try {
+                        captureAfterSettle()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (captured != null && (captured.screenSummary.isNotBlank() || captured.jpegFrame != null)) {
+                        val sig = "${captured.appLabel.orEmpty()}|${captured.screenSummary}"
+                        val shouldEmit = synchronized(lock) {
+                            if (captured.screenSummary.isNotBlank() && sig == lastSyncedSignature) {
+                                false
+                            } else {
+                                lastSyncedSignature = sig
+                                true
+                            }
+                        }
+                        if (shouldEmit) {
+                            turnCoordinator.enqueue(
+                                LiveAsyncEvent.UserTouchGuidance(
+                                    appLabel = captured.appLabel,
+                                    screenSummary = captured.screenSummary,
+                                    jpegFrame = captured.jpegFrame,
+                                    touchCount = count,
+                                    speakAloud = false,
+                                ),
+                            )
                         }
                     }
-                    if (shouldEmit) {
-                        turnCoordinator.enqueue(
-                            LiveAsyncEvent.UserTouchGuidance(
-                                appLabel = captured.appLabel,
-                                screenSummary = captured.screenSummary,
-                                jpegFrame = captured.jpegFrame,
-                                touchCount = count,
-                                speakAloud = false,
-                            ),
-                        )
+                } finally {
+                    if (!touching.get()) {
+                        val resume = synchronized(lock) {
+                            val hook = pendingResumeHook
+                            pendingResumeHook = null
+                            hook
+                        }
+                        resume?.invoke()
                     }
                 }
             }
@@ -156,6 +168,7 @@ internal class LiveUserTouchCoordinator(
             val texts = ArrayList<String>(24)
             val buttons = ArrayList<String>(16)
             for (el in snapshot.elements) {
+                if (el.secret) continue
                 val name = el.name.trim()
                 if (name.isEmpty()) continue
                 if (el.clickable || el.editable) {

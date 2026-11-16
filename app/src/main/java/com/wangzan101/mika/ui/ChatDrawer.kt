@@ -46,14 +46,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
-import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
@@ -163,10 +160,6 @@ enum class ArchivePeriod { ThisWeek, ThisMonth, Earlier }
 
 /** 归档视图里的一组。[rows] 保持传进来的顺序(按归档时间倒序)。 */
 data class ArchiveGroup(val period: ArchivePeriod, val rows: List<DrawerConversation>)
-
-/** 能不能左滑归档:存过的、没在跑的、没归档的才行;草稿和正在跑任务的不能滑。 */
-fun canSwipeArchive(item: DrawerConversation): Boolean =
-    item.id != null && item.saved && !item.running && !item.archived
 
 /** 侧栏里的对话分段:进行中、置顶、最近。 */
 data class DrawerSections(
@@ -355,7 +348,6 @@ fun ChatDrawer(
     searchFilter: SearchArchiveFilter = SearchArchiveFilter.All,
     onSearchFilterChange: (SearchArchiveFilter) -> Unit = {},
     onNew: () -> Unit,
-    onPlans: () -> Unit,
     onScreens: () -> Unit = {},
     onSettings: () -> Unit,
     onOpen: (DrawerConversation) -> Unit,
@@ -367,7 +359,6 @@ fun ChatDrawer(
     /** 多选模式:每行左边出现勾选框,点一行是勾选;底部换成「已选 N 条 / 全选 / 删除」。 */
     selecting: Boolean = false,
     selected: Set<String> = emptySet(),
-    onStartSelect: () -> Unit = {},
     onExitSelect: () -> Unit = {},
     onToggleSelect: (DrawerConversation) -> Unit = {},
     onSelectAll: () -> Unit = {},
@@ -376,8 +367,6 @@ fun ChatDrawer(
     onUnarchiveSelected: () -> Unit = {},
     /** 普通侧栏里多选后「归档」;归档视图里用不到。 */
     onArchiveSelected: () -> Unit = {},
-    /** 往左滑一行:归档它;能不能滑由 [canSwipeArchive] 决定。 */
-    onArchiveSwipe: (DrawerConversation) -> Unit = {},
     /** 批量删除的进度和结果;在底部显示,删完过几秒由外面清掉。 */
     deleteBatch: DeleteBatch? = null,
     /** 批量归档的结果;在底部显示,过几秒由外面清掉。 */
@@ -421,21 +410,27 @@ fun ChatDrawer(
                     Text(state, style = MikaType.Hint, fontWeight = FontWeight.Medium, color = c.ink3)
                 }
             }
-            // 多选从顶上这个按钮进;进去以后这里换成「取消」,返回键同样能退出
-            when {
-                selecting -> HeaderAction(stringResource(R.string.cancel), "drawer-select-cancel", c.ink2, onExitSelect)
-                selectableIds.isNotEmpty() && !searchActive ->
-                    HeaderAction(stringResource(R.string.drawer_select), "drawer-select", c.accent, onStartSelect)
+            // 多选从长按菜单进;进去以后这里换成「取消」,返回键同样能退出
+            if (selecting) HeaderAction(stringResource(R.string.cancel), "drawer-select-cancel", c.ink2, onExitSelect)
+        }
+        // 搜索框和新对话并成一行:搜索框占满,右边一个中性圆加号(没在搜时才有);没有可搜的对话时也留那个加号
+        val showNew = !searchActive && !selecting && !archivedView
+        if (canSearch && !selecting && !archivedView) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DrawerSearchField(query, onQueryChange, Modifier.weight(1f))
+                if (showNew) NewConversationButton(canSwitch, onNew)
+            }
+        } else if (showNew) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                NewConversationButton(canSwitch, onNew)
             }
         }
-        if (canSearch && !selecting && !archivedView) DrawerSearchField(query, onQueryChange)
         // 搜索时搜索框下面按归档状态筛;归档视图里没有搜索,自然也没有这一行
         if (searchActive) SearchArchiveFilterRow(searchFilter, onSearchFilterChange)
-        // 搜索、多选、归档视图时把几个入口收起来，把高度让给列表;退出后原样回来
-        if (!searchActive && !selecting && !archivedView) Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-            NavEntry(MikaIcons.New, stringResource(R.string.chat_new), enabled = canSwitch, onClick = onNew)
-            NavEntry(MikaIcons.Clock, stringResource(R.string.drawer_plans), onClick = onPlans)
-        }
         // 侧栏关着时列表只剩末尾那一项;打开时对话插在它前面,列表会按原来那一项停在最底下。最上面一项变了就回到顶上
         val list = rememberLazyListState()
         val first = when {
@@ -450,13 +445,6 @@ fun ChatDrawer(
         val terms = remember(query) { ConversationSearch.termsOf(query) }
         // 归档视图按本周 / 本月 / 更早分组;分组也跟着列表走
         val archiveGrouping = remember(archived) { archiveGroups(archived, System.currentTimeMillis()) }
-        // 普通列表里能左滑归档的行;多选时先不响应,免得和勾选打架
-        fun swipeFor(item: DrawerConversation): (() -> Unit)? =
-            if (!selecting && canSwipeArchive(item)) {
-                { onArchiveSwipe(item) }
-            } else {
-                null
-            }
         LazyColumn(Modifier.fillMaxWidth().weight(1f).lazyListScrollbar(list), state = list) {
             if (searchActive) {
                 item("h-search") { SectionLabel(stringResource(R.string.drawer_search_results)) }
@@ -517,7 +505,7 @@ fun ChatDrawer(
                     items(sections.pinned, key = { "p-${it.id}" }) {
                         ConversationEntry(
                             it, onOpen, onActions, selecting = selecting, selected = it.id in selected,
-                            onToggleSelect = onToggleSelect, onArchiveSwipe = swipeFor(it),
+                            onToggleSelect = onToggleSelect,
                         )
                     }
                 }
@@ -527,7 +515,7 @@ fun ChatDrawer(
                     items(sections.recent, key = { "c-${it.id}" }) {
                         ConversationEntry(
                             it, onOpen, onActions, selecting = selecting, selected = it.id in selected,
-                            onToggleSelect = onToggleSelect, onArchiveSwipe = swipeFor(it),
+                            onToggleSelect = onToggleSelect,
                         )
                     }
                 }
@@ -544,14 +532,14 @@ fun ChatDrawer(
         if (selecting) {
             SelectBar(selectedCount, allSelected, onSelectAll, archivedView, onArchiveSelected, onUnarchiveSelected, onDeleteSelected)
         } else {
-            // 设置和关于并排固定在侧栏最底下,对话再多也不被挤走:设置靠左,关于靠右,中间留空
+            // 设置固定在侧栏最底下靠左;有新版时右边才出现「更新」带红点,点它进「关于 Mika」
             Row(
                 Modifier.fillMaxWidth().drawBehind { drawLine(c.hair, Offset(0f, 0f), Offset(size.width, 0f), 0.5.dp.toPx()) }
                     .padding(horizontal = 12.dp, vertical = 6.dp).testTag("drawer-footer"),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 NavEntry(MikaIcons.Gear, stringResource(R.string.settings_title), Modifier, onClick = onSettings)
-                NavEntry(MikaIcons.Info, AboutCopy.TITLE, Modifier, dot = aboutDot, onClick = onAbout)
+                if (aboutDot) NavEntry(MikaIcons.Refresh, stringResource(R.string.drawer_update), Modifier, dot = true, onClick = onAbout)
             }
         }
     }
@@ -738,6 +726,20 @@ private fun NavEntry(
     }
 }
 
+/** 侧栏搜索框右边的新对话按钮:中性圆底 + 深色加号,和顶栏 ✚ 一个样子。 */
+@Composable
+private fun NewConversationButton(enabled: Boolean, onClick: () -> Unit) {
+    val c = MikaTheme.colors
+    Box(
+        Modifier.size(38.dp).clip(CircleShape).background(c.fill)
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = stringResource(R.string.chat_new), onClick = onClick)
+            .alpha(if (enabled) 1f else 0.4f),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(MikaIcons.New, stringResource(R.string.chat_new), Modifier.size(18.dp), tint = c.ink)
+    }
+}
+
 /** 「进行中」的段标题,右边一个「后台屏 ›」进后台屏页(只有有任务在跑时才有这一段)。 */
 @Composable
 private fun RunningLabel(onScreens: () -> Unit) {
@@ -783,8 +785,6 @@ internal fun ConversationEntry(
     onToggleSelect: (DrawerConversation) -> Unit = {},
     /** 标题前显不显示归档小图标;归档视图里每一行都是归档的,不用再标。 */
     showArchivedMark: Boolean = true,
-    /** 往左滑归档;为 null 时不能滑(多选、归档视图、草稿、在跑任务的)。 */
-    onArchiveSwipe: (() -> Unit)? = null,
 ) {
     val c = MikaTheme.colors
     val deletable = item.id != null
@@ -825,36 +825,7 @@ internal fun ConversationEntry(
             }
         }
     }
-    if (onArchiveSwipe == null) {
-        row()
-    } else {
-        val dismiss = rememberSwipeToDismissBoxState(
-            // 滑到底就归档,这一行弹回去;归档后列表自己会把它拿走
-            confirmValueChange = { value ->
-                if (value == SwipeToDismissBoxValue.EndToStart) onArchiveSwipe()
-                false
-            },
-        )
-        SwipeToDismissBox(
-            state = dismiss,
-            enableDismissFromStartToEnd = false,
-            backgroundContent = {
-                if (dismiss.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
-                    Box(
-                        Modifier.fillMaxSize().padding(horizontal = 12.dp).clip(NavShape).background(c.accentSoft)
-                            .padding(horizontal = 20.dp).testTag("conversation-archive-swipe"),
-                        contentAlignment = Alignment.CenterEnd,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(MikaIcons.Archive, null, Modifier.size(16.dp), tint = c.accent)
-                            Text(stringResource(R.string.drawer_archive), style = MikaType.Label, color = c.accent)
-                        }
-                    }
-                }
-            },
-            modifier = Modifier.testTag("conversation-swipe"),
-        ) { row() }
-    }
+    row()
 }
 
 /** 多选模式下每行左边的勾选框:没选是空心圆,选了是实心圆加一个白勾。 */
@@ -1017,7 +988,6 @@ fun ChatWithDrawer(
     conversationTitle: (String) -> String? = { null },
     /** 侧栏搜索用的索引;没有时侧栏不显示搜索框。 */
     search: ConversationSearch? = null,
-    onPlans: () -> Unit,
     onScreens: () -> Unit = {},
     onSettings: () -> Unit,
     onAbout: () -> Unit = {},
@@ -1031,13 +1001,13 @@ fun ChatWithDrawer(
     resetKey: Int = 0,
     content: @Composable (openDrawer: () -> Unit) -> Unit,
 ) {
-    val drawer = rememberDrawerState(DrawerValue.Closed)
+    // 抽屉状态别用 rememberDrawerState(它带 rememberSaveable):从侧栏进去的页面退回来时,
+    // SaveableStateProvider 会先把状态恢复成离开前「关着」的样子,再由 LaunchedEffect 弹开,会闪一下。
+    // 用普通 remember 当场按 reopen 决定初始状态,第一帧就是打开的。
+    val drawer = remember { DrawerState(if (reopen) DrawerValue.Open else DrawerValue.Closed) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(reopen) {
-        if (reopen) {
-            drawer.snapTo(DrawerValue.Open)
-            onReopened()
-        }
+        if (reopen) onReopened()
     }
     val ui by vm.ui.collectAsState()
     val others by vm.otherRunning.collectAsState()
@@ -1271,7 +1241,6 @@ fun ChatWithDrawer(
                     searchFilter = searchFilter,
                     onSearchFilterChange = { searchFilter = it },
                     onNew = { close { vm.newConversation(); onRegularChat() } },
-                    onPlans = { leave(onPlans) },
                     onSettings = { leave(onSettings) },
                     onScreens = { leave(onScreens) },
                     onAbout = { leave(onAbout) },
@@ -1292,7 +1261,6 @@ fun ChatWithDrawer(
                     },
                     selecting = selecting,
                     selected = selected,
-                    onStartSelect = { archiveUndo = null; selecting = true },
                     onExitSelect = {
                         selecting = false
                         selected = emptySet()
@@ -1324,7 +1292,6 @@ fun ChatWithDrawer(
                             archiveBatch = ArchiveBatch(archived, ids.size - archived)
                         }
                     },
-                    onArchiveSwipe = { item -> item.id?.let { archiveWithUndo(it, item.title) } },
                     deleteBatch = deleteBatch,
                     archiveBatch = archiveBatch,
                     archiveUndo = archiveUndo,
@@ -1362,6 +1329,7 @@ fun ChatWithDrawer(
                 onTerminal = { closeMenu { activity?.let { a -> com.wangzan101.mika.ui.terminal.TerminalLauncher.open(a, id, item.title) } } },
                 onExport = { closeMenu { exporting = item } },
                 onDelete = { closeMenu { confirming = item to vm.deleteImpact(id) } },
+                onSelect = { closeMenu { archiveUndo = null; selecting = true; selected = setOf(id) } },
                 onDismiss = { closeMenu() },
             )
         }

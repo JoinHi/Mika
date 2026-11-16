@@ -2,7 +2,6 @@ package com.wangzan101.mika.personal.live
 
 import android.Manifest
 import android.app.KeyguardManager
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.SystemClock
@@ -46,7 +45,6 @@ import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.task.TaskService
-import com.wangzan101.mika.voice.WakeWordService
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.ArrayDeque
@@ -493,7 +491,6 @@ class PersonalLiveRuntime internal constructor(
     @Volatile private var suspendedSinceMs: Long = 0L
     @Volatile private var suspendedLastCallId: String? = null
     @Volatile private var pendingPostResumeNotice: String? = null
-    @Volatile private var pausedWakeWordForLive: Boolean = false
 
     private val userTextDeliverer = LiveUserTextDeliverer(
         phaseProvider = { _uiState.value.phase },
@@ -704,7 +701,6 @@ class PersonalLiveRuntime internal constructor(
         runCatching { currentSession?.close() }
         currentSession = null
         audioController.stop()
-        restoreWakeWordIfNeeded()
         resumptionHandle = null
         resumptionHandleAtMs = 0L
         pendingPostResumeNotice = null
@@ -852,21 +848,6 @@ class PersonalLiveRuntime internal constructor(
 
     internal fun onForegroundServiceFailed(t: Throwable) {
         Log.w(TAG, "Microphone foreground service could not start", t)
-    }
-
-    private fun pauseWakeWordForLiveAudio() {
-        if (WakeWordService.active.value) {
-            pausedWakeWordForLive = true
-            runCatching { app.stopService(Intent(app, WakeWordService::class.java)) }
-        }
-    }
-
-    private fun restoreWakeWordIfNeeded() {
-        if (!pausedWakeWordForLive) return
-        pausedWakeWordForLive = false
-        if (app.foreground.visible.value) {
-            runCatching { WakeWordService.restoreIfRequested(app) }
-        }
     }
 
     private fun suspendForExternalCall() {
@@ -1045,7 +1026,6 @@ class PersonalLiveRuntime internal constructor(
                 }
 
                 sessionCapabilitiesOverride = session.capabilities
-                pauseWakeWordForLiveAudio()
                 currentSession = session
                 val audioStarted = audioController.start(initialMuted = _uiState.value.muted)
                 if (!audioStarted) {
@@ -2575,7 +2555,6 @@ class PersonalLiveRuntime internal constructor(
         runCatching { currentSession?.close() }
         currentSession = null
         audioController.stop()
-        restoreWakeWordIfNeeded()
         resumptionHandle = null
         resumptionHandleAtMs = 0L
         clearPendingTurnRecovery()

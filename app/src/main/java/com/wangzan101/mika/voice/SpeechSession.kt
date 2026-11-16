@@ -17,9 +17,6 @@ sealed interface SpeechEvent {
     /** 到此刻听到的全文:[tail] 是末尾还可能变的几个字,其余是 [stable]。 */
     data class Partial(val stable: String, val tail: String) : SpeechEvent
 
-    /** Provider marked the latest recognized sentence stable; recording may still continue. */
-    data class SegmentFinal(val text: String) : SpeechEvent
-
     /** 服务商:松开后在转。 */
     data object Converting : SpeechEvent
 
@@ -33,13 +30,18 @@ sealed interface SpeechFailure {
     data object NoPermission : SpeechFailure
     data object Busy : SpeechFailure
     data object Network : SpeechFailure
-    /** 麦克风起不来(识别服务报客户端出错、开始听时抛错、服务商那条路的录音起不来):多半是被别的应用占着。 */
+    /** 本机录音器起不来(服务商转写用的录音):可能被别的应用占着;识别服务初始化失败另行说明。 */
     data object MicUnavailable : SpeechFailure
     /**
      * 识别服务报录音出错(ERROR_AUDIO):录音权限给了也可能录不到,例如系统的麦克风使用总开关关着,
      * 或系统权限管理里单独关掉了麦克风。界面据此说明该去哪里看。
      */
     data object AudioError : SpeechFailure
+    /**
+     * 识别服务说没有权限,而且查得出来是它自己(另一个应用)没有录音权限,不是 Mika 没有(见 [SpeechServiceMic])。
+     * 界面据此说明,并带用户去那个应用的设置页。
+     */
+    data class ServiceNoPermission(val service: SpeechServiceTarget) : SpeechFailure
     data class Provider(val error: ModelError) : SpeechFailure
     data class Unavailable(val why: SpeechEngineSpec.Why) : SpeechFailure
 }

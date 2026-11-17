@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Mika Live 음성 대화</string>
-    <string name="live_channel_desc">다른 앱으로 전환하거나 화면이 잠겨도 실시간 음성 대화를 유지합니다</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">실시간 통화</string>
-    <string name="live_entry_active">통화 중</string>
+    <string name="live_channel_name">Mika 음성 모드</string>
+    <string name="live_channel_desc">다른 앱으로 전환하거나 화면이 잠겨도 음성 모드를 유지합니다</string>
+    <string name="live_notification_title">Mika 음성 모드</string>
+    <string name="live_capsule_title">음성 모드</string>
+    <string name="live_entry_button">음성 모드</string>
+    <string name="live_entry_active">음성 모드 중</string>
 
     <string name="live_status_connecting">연결 중…</string>
     <string name="live_status_reconnecting">재연결 중…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">음성 톤</string>
     <string name="live_settings_model_label">실시간 오디오 모델</string>
 
-    <string name="live_error_mic_permission">Mika Live 음성 대화를 위해 마이크 권한이 필요합니다.</string>
+    <string name="live_error_mic_permission">음성 모드를 사용하려면 마이크 권한이 필요합니다.</string>
     <string name="live_error_no_gemini_key">먼저 모델 설정에서 Gemini API 키를 설정하세요.</string>
-    <string name="live_error_in_carrier_call">전화 통화 중에는 Mika Live를 시작할 수 없습니다.</string>
+    <string name="live_error_in_carrier_call">전화 통화 중에는 음성 모드를 시작할 수 없습니다.</string>
     <string name="live_error_connect_failed">Gemini Live에 연결하지 못했습니다. API 키와 네트워크를 확인하세요.</string>
     <string name="live_error_audio_init">양방향 오디오를 시작할 수 없습니다. 다른 앱이 마이크를 사용 중일 수 있습니다.</string>
     <string name="live_screen_unavailable">먼저 다른 앱으로 전환하고 접근성 및 화면 공유 권한을 확인하세요.</string>
-    <string name="live_hint_idle_hangup">3분 동안 대화가 없고 진행 중인 작업이 없어 Mika Live가 자동 종료되었습니다.</string>
+    <string name="live_hint_idle_hangup">3분 동안 대화가 없고 진행 중인 작업이 없어 음성 모드가 자동 종료되었습니다.</string>
 
     <string name="live_stage_idle_title">실시간 가상 화면 대기 중</string>
     <string name="live_stage_idle_body">Mika에게 실행할 앱이나 작업을 말하면 실시간 화면이 여기에 크게 표시됩니다</string>
     <string name="live_stage_preparing">실시간 가상 화면 시작 중…</string>
     <string name="live_stage_snapshot_wake">화면 일시정지됨 · 탭하여 조작 재개</string>
 
-    <string name="role_live_voice">음성 통화 모델</string>
+    <string name="role_live_voice">음성 모드 모델</string>
     <string name="role_live_voice_what">실시간 음성 대화</string>
     <string name="role_live_voice_need_gemini">Google Gemini 필요</string>
 
-    <string name="live_in_call_label">대화 중</string>
+    <string name="live_in_call_label">음성 모드</string>
     <string name="live_status_listening_ready">듣는 중 · 명령을 말씀해 주세요</string>
     <string name="live_status_thinking">Mika 생각 중…</string>
     <string name="live_status_needs_attention">화면 확인 대기 중</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">화면 응답 대기 중</string>
     <string name="live_step_acting">화면 조작 중</string>
 
-    <string name="live_voice_setup_lead">실시간 음성 통화는 Google Gemini Live 네이티브 오디오 모델로 구동됩니다. Gemini API 키, 실시간 오디오 모델, 음성을 설정하면 통화를 시작할 수 있습니다.</string>
+    <string name="live_voice_setup_lead">음성 모드는 Google Gemini Live 네이티브 오디오 모델로 구동됩니다. Gemini API 키, 실시간 오디오 모델, 음성을 설정하면 대화를 시작할 수 있습니다.</string>
     <string name="live_voice_connect_title">Google Gemini 연결</string>
     <string name="live_voice_connect_save">연결 및 활성화</string>
     <string name="live_voice_enable_save">저장 및 활성화</string>
-    <string name="live_voice_disable">음성 통화 모델 비활성화</string>
+    <string name="live_voice_disable">음성 모드 모델 비활성화</string>
     <string name="live_subtitle_idle_hint">언제든 말씀하거나 끼어들 수 있습니다</string>
 </resources>

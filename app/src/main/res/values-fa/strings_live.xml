@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">گفتگوی صوتی Mika Live</string>
-    <string name="live_channel_desc">حفظ مکالمه صوتی بلادرنگ هنگام جابه‌جایی بین برنامه‌ها و قفل صفحه</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">زنده</string>
-    <string name="live_entry_active">در حال مکالمه</string>
+    <string name="live_channel_name">حالت صوتی Mika</string>
+    <string name="live_channel_desc">حفظ حالت صوتی هنگام جابه‌جایی بین برنامه‌ها و قفل صفحه</string>
+    <string name="live_notification_title">حالت صوتی Mika</string>
+    <string name="live_capsule_title">حالت صوتی</string>
+    <string name="live_entry_button">حالت صوتی</string>
+    <string name="live_entry_active">حالت صوتی</string>
 
     <string name="live_status_connecting">در حال اتصال…</string>
     <string name="live_status_reconnecting">در حال اتصال مجدد…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">صدای سخنگو</string>
     <string name="live_settings_model_label">مدل صوتی زنده</string>
 
-    <string name="live_error_mic_permission">برای گفتگوی صوتی Mika Live مجوز میکروفون لازم است.</string>
+    <string name="live_error_mic_permission">برای حالت صوتی مجوز میکروفون لازم است.</string>
     <string name="live_error_no_gemini_key">لطفاً ابتدا یک کلید Gemini API در تنظیمات مدل‌ها وارد کنید.</string>
-    <string name="live_error_in_carrier_call">هنگام برقراری تماس تلفنی نمی‌توان Mika Live را آغاز کرد.</string>
+    <string name="live_error_in_carrier_call">هنگام برقراری تماس تلفنی نمی‌توان حالت صوتی را آغاز کرد.</string>
     <string name="live_error_connect_failed">اتصال به Gemini Live ناموفق بود. کلید API و شبکه را بررسی کنید.</string>
     <string name="live_error_audio_init">راه‌اندازی صدای دوطرفه ممکن نشد. شاید برنامه دیگری میکروفون را اشغال کرده باشد.</string>
     <string name="live_screen_unavailable">ابتدا به برنامه دیگری بروید و دسترسی‌پذیری و مجوز اشتراک صفحه را بررسی کنید.</string>
-    <string name="live_hint_idle_hangup">پس از ۳ دقیقه سکوت بدون کار فعال، Mika Live به‌طور خودکار پایان یافت.</string>
+    <string name="live_hint_idle_hangup">پس از ۳ دقیقه سکوت بدون کار فعال، حالت صوتی به‌طور خودکار پایان یافت.</string>
 
     <string name="live_stage_idle_title">صفحه مجازی زنده آماده است</string>
     <string name="live_stage_idle_body">برنامه یا کار موردنظر را به Mika بگویید تا تصویر زنده در اینجا با بیشترین اندازه نمایش داده شود</string>
     <string name="live_stage_preparing">در حال راه‌اندازی صفحه مجازی زنده…</string>
     <string name="live_stage_snapshot_wake">صفحه متوقف شده است · برای ادامه ضربه بزنید</string>
 
-    <string name="role_live_voice">مدل تماس صوتی</string>
+    <string name="role_live_voice">مدل حالت صوتی</string>
     <string name="role_live_voice_what">گفتگوی صوتی زنده</string>
     <string name="role_live_voice_need_gemini">نیازمند Google Gemini</string>
 
-    <string name="live_in_call_label">در حال گفتگو</string>
+    <string name="live_in_call_label">حالت صوتی</string>
     <string name="live_status_listening_ready">در حال گوش دادن · دستور خود را بگویید</string>
     <string name="live_status_thinking">Mika در حال فکر کردن…</string>
     <string name="live_status_needs_attention">در انتظار تایید شما روی صفحه</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">در انتظار پاسخ صفحه</string>
     <string name="live_step_acting">در حال کنترل صفحه</string>
 
-    <string name="live_voice_setup_lead">تماس صوتی زنده با مدل‌های صوتی بومی Google Gemini Live کار می‌کند. کلید Gemini API، مدل صوتی و صدای تماس را تنظیم کنید تا گفتگو آغاز شود.</string>
+    <string name="live_voice_setup_lead">حالت صوتی با مدل‌های صوتی بومی Google Gemini Live کار می‌کند. کلید Gemini API، مدل صوتی و صدا را تنظیم کنید تا گفتگو آغاز شود.</string>
     <string name="live_voice_connect_title">اتصال به Google Gemini</string>
     <string name="live_voice_connect_save">اتصال و فعال‌سازی</string>
     <string name="live_voice_enable_save">ذخیره و فعال‌سازی</string>
-    <string name="live_voice_disable">غیرفعال کردن مدل تماس صوتی</string>
+    <string name="live_voice_disable">غیرفعال کردن مدل حالت صوتی</string>
     <string name="live_subtitle_idle_hint">هر زمان خواستید صحبت کنید</string>
 </resources>

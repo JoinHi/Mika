@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">打开后监听语音口令</string>
+    <string name="voice_command_setting_sub">麦克风空闲时最多监听 5 秒。优先使用已选的 ASR，否则使用系统识别；识别可能联网。</string>
+    <string name="voice_command_need_live">请先配置语音模式模型。未配置语音模式时不会监听口令。</string>
+    <string name="voice_command_need_recognition">请先配置语音转文字，或启用手机的语音识别服务。</string>
+    <string name="voice_command_permission">语音口令需要麦克风权限。</string>
+    <string name="voice_command_listening">正在听口令 · 最多 5 秒</string>
+    <string name="voice_command_recognizing">正在识别口令</string>
+    <string name="voice_command_phrase">说“开启语音模式”进入语音模式。</string>
+    <string name="voice_command_cancel">取消</string>
+    <string name="voice_command_no_speech">没有识别到语音</string>
+    <string name="voice_command_not_matched">未匹配到开启语音模式的口令</string>
+    <string name="voice_command_timeout">转写超时，请检查语音转文字设置</string>
+    <string name="voice_command_busy">麦克风被占用，已取消口令</string>
+    <string name="voice_command_unavailable">暂时无法开启语音模式，请检查模型和麦克风设置</string>
+</resources>

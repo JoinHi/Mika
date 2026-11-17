@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">開啟後聆聽語音口令</string>
+    <string name="voice_command_setting_sub">麥克風閒置時最多聆聽 5 秒。優先使用已選的 ASR，否則使用系統辨識；辨識可能連網。</string>
+    <string name="voice_command_need_live">請先設定語音模式模型。未設定語音模式時不會聆聽口令。</string>
+    <string name="voice_command_need_recognition">請先設定語音轉文字，或啟用手機的語音辨識服務。</string>
+    <string name="voice_command_permission">語音口令需要麥克風權限。</string>
+    <string name="voice_command_listening">正在聽口令 · 最多 5 秒</string>
+    <string name="voice_command_recognizing">正在辨識口令</string>
+    <string name="voice_command_phrase">說「開啟語音模式」進入語音模式。</string>
+    <string name="voice_command_cancel">取消</string>
+    <string name="voice_command_no_speech">沒有辨識到語音</string>
+    <string name="voice_command_not_matched">未比對到開啟語音模式的口令</string>
+    <string name="voice_command_timeout">轉寫逾時，請檢查語音轉文字設定</string>
+    <string name="voice_command_busy">麥克風被佔用，已取消口令</string>
+    <string name="voice_command_unavailable">暫時無法開啟語音模式，請檢查模型與麥克風設定</string>
+</resources>

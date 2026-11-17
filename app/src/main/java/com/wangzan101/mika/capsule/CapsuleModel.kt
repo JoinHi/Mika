@@ -106,7 +106,7 @@ enum class CapsuleKind {
     /** 要你在手机上动一下手(如在系统的选择框里选一个),动完自动接着做。 */
     NeedStep,
     Held, Running, Done, Failed, Cancelled,
-    /** Mika Live 实时语音在后台通话中(绿点)。 */
+    /** 语音模式在后台运行中(绿点)。 */
     LiveVoice,
     /** 没有任务在跑,任务结束后留下的那一页在后台运行(「后台网页运行中」,绿点)。 */
     KeptPage,

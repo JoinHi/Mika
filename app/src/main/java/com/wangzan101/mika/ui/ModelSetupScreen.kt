@@ -103,7 +103,7 @@ fun ModelSetupScreen(
     store: ProviderStore, onboarding: Boolean, onBack: () -> Unit, onDone: () -> Unit,
     /** 设置里点「语音转文字」卡片去选择页;上手流程不传,卡片就不出现。 */
     onOpenSpeech: (() -> Unit)? = null,
-    /** 设置里点「语音通话模型」卡片去实时语音模型与音色配置页;上手流程不传。 */
+    /** 设置里点「语音模式模型」卡片去实时语音模型与音色配置页;上手流程不传。 */
     onOpenLiveVoice: (() -> Unit)? = null,
     /** 设置里查看 Token 用量;上手流程不传。 */
     onOpenUsage: (() -> Unit)? = null,
@@ -300,7 +300,7 @@ class ModelSetupActions(
     val pickFallback: (Int) -> Unit = {},
     /** 打开「语音转文字」的选择页;为 null 时不显示这张卡(上手流程)。 */
     val openSpeech: (() -> Unit)? = null,
-    /** 打开「语音通话模型」的选择页;为 null 时不显示这张卡(上手流程)。 */
+    /** 打开「语音模式模型」的选择页;为 null 时不显示这张卡(上手流程)。 */
     val openLiveVoice: (() -> Unit)? = null,
     /** 打开 Token 用量;为 null 时不显示入口(上手流程)。 */
     val openUsage: (() -> Unit)? = null,
@@ -646,7 +646,7 @@ private fun RolesSection(ui: ModelSetupUi, onPick: (ModelRole) -> Unit, onReason
         if (onSpeech != null) {
             RoleCard(ModelsCopy.SPEECH_ICON, ModelsCopy.SPEECH_LABEL, ModelsCopy.speechLine(ui), tag = "role-speech", onClick = onSpeech)
         }
-        // 第五个用途:语音通话模型(Gemini Live 原生音频模型与音色,点开是单独的配置页)
+        // 第五个用途:语音模式模型(Gemini Live 原生音频模型与音色,点开是单独的配置页)
         if (onLiveVoice != null) {
             RoleCard(ModelsCopy.LIVE_VOICE_ICON, ModelsCopy.LIVE_VOICE_LABEL, ModelsCopy.liveVoiceLine(ui), tag = "role-live-voice", onClick = onLiveVoice)
         }

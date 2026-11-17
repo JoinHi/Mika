@@ -29,6 +29,7 @@
 | [remote-device-access-check.md](remote-device-access-check.md) | 远程亮屏与解锁的验证记录 |
 | [personal-agent.md](personal-agent.md) | 长期个人主会话、独立任务委派与结果回流 |
 | [personal-live.md](personal-live.md) | 个人助手全双工实时语音、实时虚拟屏舞台与直控安全治理 |
+| [voice-command.md](voice-command.md) | 前台语音口令开启语音模式、麦克风空闲检测与避让边界 |
 | [remote-mcp.md](remote-mcp.md) | 自托管远程 CLI / MCP 的部署、手机鉴权和断线语义 |
 | [teach-mika.md](teach-mika.md) | 人工示范怎样收成待确认的知识型技能 |
 

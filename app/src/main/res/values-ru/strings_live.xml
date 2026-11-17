@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Голосовой чат Mika Live</string>
-    <string name="live_channel_desc">Поддерживает голосовой диалог в реальном времени при смене приложений и блокировке экрана</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">Эфир</string>
-    <string name="live_entry_active">В эфире</string>
+    <string name="live_channel_name">Голосовой режим Mika</string>
+    <string name="live_channel_desc">Поддерживает голосовой режим при смене приложений и блокировке экрана</string>
+    <string name="live_notification_title">Голосовой режим Mika</string>
+    <string name="live_capsule_title">Голосовой режим</string>
+    <string name="live_entry_button">Голос</string>
+    <string name="live_entry_active">Голос</string>
 
     <string name="live_status_connecting">Подключение…</string>
     <string name="live_status_reconnecting">Переподключение…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">Голос</string>
     <string name="live_settings_model_label">Модель живого аудио</string>
 
-    <string name="live_error_mic_permission">Для голосового общения Mika Live требуется доступ к микрофону.</string>
+    <string name="live_error_mic_permission">Для голосового режима требуется доступ к микрофону.</string>
     <string name="live_error_no_gemini_key">Сначала укажите API-ключ Gemini в настройках моделей.</string>
-    <string name="live_error_in_carrier_call">Невозможно запустить Mika Live во время телефонного звонка.</string>
+    <string name="live_error_in_carrier_call">Невозможно запустить голосовой режим во время телефонного звонка.</string>
     <string name="live_error_connect_failed">Не удалось подключиться к Gemini Live. Проверьте API-ключ и сеть.</string>
     <string name="live_error_audio_init">Не удалось запустить двустороннее аудио. Возможно, микрофон занят другим приложением.</string>
     <string name="live_screen_unavailable">Сначала переключитесь в другое приложение и проверьте специальные возможности и доступ к экрану.</string>
-    <string name="live_hint_idle_hangup">Сеанс Mika Live автоматически завершён после 3 минут тишины.</string>
+    <string name="live_hint_idle_hangup">Голосовой режим автоматически завершён после 3 минут тишины.</string>
 
     <string name="live_stage_idle_title">Виртуальный экран готов</string>
     <string name="live_stage_idle_body">Скажите Mika открыть приложение или выполнить действие — экран появится здесь в реальном времени во весь размер.</string>
     <string name="live_stage_preparing">Запуск виртуального экрана…</string>
     <string name="live_stage_snapshot_wake">Экран на паузе · Нажмите, чтобы продолжить</string>
 
-    <string name="role_live_voice">Модель голосового звонка</string>
+    <string name="role_live_voice">Модель голосового режима</string>
     <string name="role_live_voice_what">Живой голосовой диалог</string>
     <string name="role_live_voice_need_gemini">Требуется Google Gemini</string>
 
-    <string name="live_in_call_label">В диалоге</string>
+    <string name="live_in_call_label">Голосовой режим</string>
     <string name="live_status_listening_ready">Слушаю · Скажите команду</string>
     <string name="live_status_thinking">Mika думает…</string>
     <string name="live_status_needs_attention">Ожидание вашего подтверждения</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">Ожидание отклика экрана</string>
     <string name="live_step_acting">Управление экраном</string>
 
-    <string name="live_voice_setup_lead">Голосовые звонки в реальном времени работают на нативных аудиомоделях Google Gemini Live. Укажите API-ключ Gemini, модель и голос для начала общения.</string>
+    <string name="live_voice_setup_lead">Голосовой режим работает на нативных аудиомоделях Google Gemini Live. Укажите API-ключ Gemini, модель и голос для начала общения.</string>
     <string name="live_voice_connect_title">Подключить Google Gemini</string>
     <string name="live_voice_connect_save">Подключить и включить</string>
     <string name="live_voice_enable_save">Сохранить и включить</string>
-    <string name="live_voice_disable">Отключить модель звонка</string>
+    <string name="live_voice_disable">Отключить модель голосового режима</string>
     <string name="live_subtitle_idle_hint">Говорите в любой момент, можно перебивать</string>
 </resources>

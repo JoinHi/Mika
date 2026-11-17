@@ -21,6 +21,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -80,8 +82,15 @@ import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.animationsOff
 import com.wangzan101.mika.ui.theme.appearanceDark
 import com.wangzan101.mika.ui.theme.systemBarsFor
+import com.wangzan101.mika.voice.command.VoiceCommandEntry
 
 class MainActivity : ComponentActivity() {
+    private val voiceCommand by lazy {
+        VoiceCommandEntry(this) {
+            requestedConversation = "personal-main"
+            (application as MikaApp).personal.live.start()
+        }
+    }
     private lateinit var monitor: SystemStatusMonitor
     private var requestedConversation by mutableStateOf<String?>(null)
     private var requestedCalls by mutableStateOf(false)
@@ -113,6 +122,7 @@ class MainActivity : ComponentActivity() {
         requestedConversation = intent.getStringExtra(EXTRA_OPEN_CONVERSATION)
         requestedCalls = intent.getBooleanExtra(EXTRA_OPEN_CALLS, false)
         requestedCallHistoryId = intent.getStringExtra(EXTRA_CALL_HISTORY_ID)
+        voiceCommand.offer(intent, fresh = savedInstanceState == null)
         takeTeach(intent)
         shareInCurrent = savedInstanceState?.getBoolean(STATE_SHARE_IN_CURRENT, false) ?: false
         shareHandled = savedInstanceState?.getBoolean(STATE_SHARE_HANDLED, false) ?: false
@@ -129,23 +139,31 @@ class MainActivity : ComponentActivity() {
             MikaTheme(dark = dark, reduceMotion = animationsOff(this)) {
                 // 在输入框外面点一下或拖动就收起键盘,全 App 统一
                 KeyboardDismissArea(Modifier.fillMaxSize()) {
-                    MikaRoot(
-                        store, monitor, ::perform, requestedConversation, { requestedConversation = null },
-                        requestedCalls, requestedCallHistoryId, { requestedCalls = false; requestedCallHistoryId = null },
-                        requestedSharedDraft,
-                        onSharedDraftOpened = { accepted, draft ->
-                            requestedSharedDraft = null
-                            shareHandled = true
-                            // 处理完后换掉 intent,避免后续旋转屏幕再次把这次分享当成新分享或重复弹失败提示。
-                            setIntent(Intent(this@MainActivity, MainActivity::class.java))
-                            if (!accepted) {
-                                (application as MikaApp).sharedDrafts.discard(draft.image)
-                                Toast.makeText(this@MainActivity, R.string.share_draft_failed, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        openTeach = openTeach,
-                        onTeachOpened = { openTeach = false },
-                    )
+                    Box(Modifier.fillMaxSize()) {
+                        MikaRoot(
+                            store, monitor, ::perform, requestedConversation, { requestedConversation = null },
+                            requestedCalls, requestedCallHistoryId, { requestedCalls = false; requestedCallHistoryId = null },
+                            requestedSharedDraft,
+                            onSharedDraftOpened = { accepted, draft ->
+                                requestedSharedDraft = null
+                                shareHandled = true
+                                // 处理完后换掉 intent,避免后续旋转屏幕再次把这次分享当成新分享或重复弹失败提示。
+                                setIntent(Intent(this@MainActivity, MainActivity::class.java))
+                                if (!accepted) {
+                                    (application as MikaApp).sharedDrafts.discard(draft.image)
+                                    Toast.makeText(this@MainActivity, R.string.share_draft_failed, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            openTeach = openTeach,
+                            onTeachOpened = { openTeach = false },
+                        )
+                        VoiceCommandBanner(
+                            voiceCommand.controller,
+                            voiceCommand::cancel,
+                            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp),
+                            onBoundsChanged = voiceCommand::updateBannerBounds,
+                        )
+                    }
                 }
             }
         }
@@ -162,6 +180,7 @@ class MainActivity : ComponentActivity() {
         if (requestedConversation != null || intent.getBooleanExtra(EXTRA_OPEN_TEACH, false)) {
             app.chat.cancelPendingSharedDraft()
         }
+        voiceCommand.offer(intent)
         takeTeach(intent)
         requestedSharedDraft?.let { app.sharedDrafts.discard(it.draft.image) }
         requestedSharedDraft = null
@@ -169,6 +188,23 @@ class MainActivity : ComponentActivity() {
         shareInCurrent = true
         shareHandled = false
         receiveShare(intent, inCurrentConversation = true)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        voiceCommand.onWindowFocusChanged(hasFocus)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && !voiceCommand.isTouchInsideBanner(event.x, event.y)) {
+            voiceCommand.cancel()
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) voiceCommand.cancel()
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -620,6 +656,8 @@ private fun MikaRoot(
             val autonomous by app.approvals.autonomous.collectAsState()
             SettingsScreen(store, status, release, onFix, onBack = back, onOpenMemory = { nav.push(Route.Memory) },
                 onOpenModels = { nav.push(Route.Models) },
+                onOpenSpeech = { nav.push(Route.SpeechModel) },
+                onOpenLiveVoice = { nav.push(Route.LiveVoiceModel) },
                 onOpenBrowser = { nav.push(Route.Browser) },
                 onOpenFiles = { filesFromDrawer = false; filesConversation = app.chat.ui.value.conversationId; nav.push(Route.Files) },
                 onOpenPersonal = { nav.show(Route.Personal) },

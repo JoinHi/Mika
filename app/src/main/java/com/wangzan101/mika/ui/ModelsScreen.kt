@@ -905,7 +905,7 @@ object ModelsCopy {
         return RoleLine(s.title, s.sub.orEmpty(), isModel = !unset && (ui.speech is SpeechChoice.Provider || ui.speech is SpeechChoice.Doubao || ui.speech is SpeechChoice.FunAsr || ui.speech is SpeechChoice.Bailian), unset = unset, subtitleOk = s.subOk)
     }
 
-    /** 第五个用途「语音通话模型」:用于全双工实时语音对话(Gemini Live 原生音频与通话音色)。 */
+    /** 第五个用途「语音模式模型」:用于全双工实时语音对话(Gemini Live 原生音频与语音音色)。 */
     val LIVE_VOICE_LABEL: String get() = "${tr(R.string.role_live_voice)} · ${tr(R.string.role_live_voice_what)}"
     val LIVE_VOICE_ICON: ImageVector get() = MikaIcons.Sound
 

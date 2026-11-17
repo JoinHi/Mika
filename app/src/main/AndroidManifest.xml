@@ -256,7 +256,7 @@
                 android:value="Runs a user-requested phone task on the app's own virtual display and shows its progress; afterwards keeps the one web page the user asked to keep open running, for at most two hours" />
         </service>
 
-        <!-- Mika Live 实时全双工语音对话:切到别的 App 或锁屏期间以麦克风前台服务维持实时通话,通知栏常驻静音与挂断按钮 -->
+        <!-- 语音模式全双工语音对话:切到别的 App 或锁屏期间以麦克风前台服务维持语音模式,通知栏常驻闭麦与结束按钮 -->
         <service
             android:name=".personal.live.PersonalLiveService"
             android:exported="false"

@@ -74,9 +74,9 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 /**
- * 个人助手普通顶栏右上角的「实时通话」入口胶囊:
- * - 未配置语音通话模型时，点击直接跳转「设置 › 模型 › 语音通话模型」引导连接 Gemini 与选择音色；
- * - 已配置时检查麦克风权限并立即开启全双工实时通话。
+ * 个人助手普通顶栏右上角的「语音模式」入口胶囊:
+ * - 未配置语音模式模型时，点击直接跳转「设置 › 模型 › 语音模式模型」引导连接 Gemini 与选择音色；
+ * - 已配置时检查麦克风权限并立即开启全双工语音模式。
  */
 @Composable
 internal fun PersonalLiveLauncherPill(
@@ -238,8 +238,8 @@ private fun SubtitleLineText(role: SubtitleRole, text: String) {
 }
 
 /**
- * 实时通话最底部极简双段胶囊入口:
- * 去除了闭麦、发屏幕、切键盘、设置等冗余按钮，仅保留 `[ ● 对话中 01:28  |  挂断 ]`。
+ * 语音模式最底部极简双段胶囊入口:
+ * 去除了闭麦、发屏幕、切键盘、设置等冗余按钮，仅保留 `[ ● 语音模式 01:28  |  结束 ]`。
  */
 @Composable
 internal fun PersonalLiveBottomCallCapsule(

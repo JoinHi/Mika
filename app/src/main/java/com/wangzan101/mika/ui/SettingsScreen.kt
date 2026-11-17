@@ -88,6 +88,8 @@ fun SettingsScreen(
     onFix: (Fix) -> Unit,
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
+    onOpenSpeech: () -> Unit = onOpenModels,
+    onOpenLiveVoice: () -> Unit = onOpenModels,
     onOpenMemory: (() -> Unit)? = null,
     onOpenBrowser: () -> Unit = {},
     onOpenFiles: () -> Unit = {},
@@ -214,6 +216,13 @@ fun SettingsScreen(
             language = language, onOpenLanguage = { page = SettingsPage.Language },
             personalStart = personalStart,
             onPersonalStart = { flags.setPersonalStart(it); personalStart = it },
+            voiceCommandSetting = {
+                VoiceCommandSettingRow(
+                    onOpenModels = onOpenModels,
+                    onOpenLiveVoice = onOpenLiveVoice,
+                    onOpenSpeech = onOpenSpeech,
+                )
+            },
             autoArchiveDays = autoArchiveDays,
             onOpenAutoArchive = { editingAutoArchive = true },
             onOpenMemory = onOpenMemory,
@@ -417,6 +426,7 @@ fun SettingsContent(
     onOpenAbout: () -> Unit = {},
     personalStart: Boolean = false,
     onPersonalStart: ((Boolean) -> Unit)? = null,
+    voiceCommandSetting: @Composable () -> Unit = {},
     /** 自动归档:多久没有新消息的对话自动归档;0 表示关闭。 */
     autoArchiveDays: Int = 0,
     onOpenAutoArchive: () -> Unit = {},
@@ -475,6 +485,7 @@ fun SettingsContent(
                     MikaSwitch(personalStart, change, Modifier.semantics { contentDescription = label })
                 }
             }
+            voiceCommandSetting()
         }
 
         GroupLabel(stringResource(R.string.settings_data))

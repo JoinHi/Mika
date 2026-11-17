@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 
 /**
  * 语音专属虚拟大屏（[com.wangzan101.mika.ui.PersonalLiveScreenStage]）机主手动触控协同器：
- * - 机主点按/滑动虚拟大屏上的 App 时**绝不中断语音通话**；
+ * - 机主点按/滑动虚拟大屏上的 App 时**绝不中断语音模式**；
  * - 手指按压期间标记 [isUserTouching] 为 true，延后空闲释放与话轮抢答；
  * - 手指抬起后经 [SETTLE_DEBOUNCE_MS] 连续手势合并防抖（多次滑动/点按合并为一次状态同步），
  *   等待新界面稳定后采集轻量无障碍控件摘要，默认以**静默上下文同步（`speakAloud = false`）**投递给 [LiveTurnCoordinator]，

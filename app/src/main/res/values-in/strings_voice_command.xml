@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">Dengarkan perintah mode suara saat dibuka</string>
+    <string name="voice_command_setting_sub">Saat dibuka, mendengarkan hingga 5 detik jika mikrofon kosong. Menggunakan ASR pilihan Anda atau pengenalan sistem; mungkin menggunakan jaringan.</string>
+    <string name="voice_command_need_live">Atur model mode suara terlebih dahulu. Pendengaran perintah tetap nonaktif hingga mode suara diatur.</string>
+    <string name="voice_command_need_recognition">Atur ucapan ke teks atau aktifkan layanan pengenalan suara sistem terlebih dahulu.</string>
+    <string name="voice_command_permission">Izin mikrofon diperlukan untuk perintah suara.</string>
+    <string name="voice_command_listening">Mendengarkan perintah · maks. 5 detik</string>
+    <string name="voice_command_recognizing">Memeriksa perintah</string>
+    <string name="voice_command_phrase">Ucapkan dalam bahasa Mandarin “Kai Qi Yu Yin Mo Shi” untuk masuk ke mode suara.</string>
+    <string name="voice_command_cancel">Batal</string>
+    <string name="voice_command_no_speech">Tidak ada suara yang dikenali</string>
+    <string name="voice_command_not_matched">Perintah mode suara tidak cocok</string>
+    <string name="voice_command_timeout">Waktu transkripsi habis. Periksa setelan ucapan ke teks.</string>
+    <string name="voice_command_busy">Mikrofon sedang digunakan. Perintah dibatalkan.</string>
+    <string name="voice_command_unavailable">Tidak dapat memulai mode suara. Periksa setelan model dan mikrofon.</string>
+</resources>

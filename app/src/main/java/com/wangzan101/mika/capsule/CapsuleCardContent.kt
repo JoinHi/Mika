@@ -191,7 +191,7 @@ interface CardActions {
     fun cancelQuit() {}
     /** 退出确认里的「退出」:真正完全退出 Mika。 */
     fun quit() {}
-    /** Mika Live 后台通话中:静音切换、发送当前主屏、挂断。 */
+    /** 语音模式后台运行中:闭麦切换、发送当前主屏、结束。 */
     fun toggleLiveMute() {}
     fun shareLiveScreen() {}
     fun stopLive() {}

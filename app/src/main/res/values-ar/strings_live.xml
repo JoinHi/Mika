@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">محادثة Mika Live الصوتية</string>
-    <string name="live_channel_desc">يبقي المحادثة الصوتية الفورية متصلة أثناء التنقل بين التطبيقات وقفل الشاشة</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">مباشر</string>
-    <string name="live_entry_active">متصل</string>
+    <string name="live_channel_name">الوضع الصوتي في Mika</string>
+    <string name="live_channel_desc">يبقي الوضع الصوتي متصلاً أثناء التنقل بين التطبيقات وقفل الشاشة</string>
+    <string name="live_notification_title">الوضع الصوتي في Mika</string>
+    <string name="live_capsule_title">الوضع الصوتي</string>
+    <string name="live_entry_button">الوضع الصوتي</string>
+    <string name="live_entry_active">الوضع الصوتي</string>
 
     <string name="live_status_connecting">جارٍ الاتصال…</string>
     <string name="live_status_reconnecting">جارٍ إعادة الاتصال…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">الصوت</string>
     <string name="live_settings_model_label">نموذج الصوت المباشر</string>
 
-    <string name="live_error_mic_permission">إذن الميكروفون مطلوب لاستخدام المحادثة الصوتية في Mika Live.</string>
+    <string name="live_error_mic_permission">إذن الميكروفون مطلوب لاستخدام الوضع الصوتي.</string>
     <string name="live_error_no_gemini_key">يرجى إعداد مفتاح Gemini API في إعدادات النماذج أولاً.</string>
-    <string name="live_error_in_carrier_call">لا يمكن بدء Mika Live أثناء وجود مكالمة هاتفية جارية.</string>
+    <string name="live_error_in_carrier_call">لا يمكن بدء الوضع الصوتي أثناء وجود مكالمة هاتفية جارية.</string>
     <string name="live_error_connect_failed">تعذر الاتصال بخدمة Gemini Live. تحقق من مفتاح API والشبكة.</string>
     <string name="live_error_audio_init">تعذر تهيئة الصوت المزدوج. قد يكون تطبيق آخر يستخدم الميكروفون.</string>
     <string name="live_screen_unavailable">انتقل إلى تطبيق آخر أولاً وتأكد من تفعيل خدمة تسهيل الاستخدام ومشاركة الشاشة.</string>
-    <string name="live_hint_idle_hangup">انتهت جلسة Mika Live تلقائياً بعد 3 دقائق من الصمت.</string>
+    <string name="live_hint_idle_hangup">انتهى الوضع الصوتي تلقائياً بعد 3 دقائق من الصمت.</string>
 
     <string name="live_stage_idle_title">الشاشة الافتراضية المباشرة جاهزة</string>
     <string name="live_stage_idle_body">اطلب من Mika فتح أي تطبيق أو تنفيذ إجراء وستظهر الشاشة المباشرة هنا بحجم كامل</string>
     <string name="live_stage_preparing">جارٍ تشغيل الشاشة الافتراضية المباشرة…</string>
     <string name="live_stage_snapshot_wake">الشاشة متوقفة مؤقتًا · انقر للمتابعة</string>
 
-    <string name="role_live_voice">نموذج المكالمة الصوتية</string>
+    <string name="role_live_voice">نموذج الوضع الصوتي</string>
     <string name="role_live_voice_what">محادثة صوتية مباشرة</string>
     <string name="role_live_voice_need_gemini">يتطلب Google Gemini</string>
 
-    <string name="live_in_call_label">في المحادثة</string>
+    <string name="live_in_call_label">الوضع الصوتي</string>
     <string name="live_status_listening_ready">قيد الاستماع · تحدث بأمرك</string>
     <string name="live_status_thinking">Mika تفكر…</string>
     <string name="live_status_needs_attention">بانتظار تأكيدك على الشاشة</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">بانتظار استجابة الشاشة</string>
     <string name="live_step_acting">جارٍ التحكم في الشاشة</string>
 
-    <string name="live_voice_setup_lead">تعمل المكالمات الصوتية المباشرة بنماذج الصوت الأصلية من Google Gemini Live. أضف مفتاح Gemini API واختر النموذج والصوت لبدء التحدث.</string>
+    <string name="live_voice_setup_lead">يعمل الوضع الصوتي بنماذج الصوت الأصلية من Google Gemini Live. أضف مفتاح Gemini API واختر النموذج والصوت لبدء التحدث.</string>
     <string name="live_voice_connect_title">الاتصال بـ Google Gemini</string>
     <string name="live_voice_connect_save">اتصال وتفعيل</string>
     <string name="live_voice_enable_save">حفظ وتفعيل</string>
-    <string name="live_voice_disable">تعطيل نموذج المكالمة الصوتية</string>
+    <string name="live_voice_disable">تعطيل نموذج الوضع الصوتي</string>
     <string name="live_subtitle_idle_hint">تحدث في أي وقت ويمكنك المقاطعة بحرية</string>
 </resources>

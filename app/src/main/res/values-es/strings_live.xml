@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Voz en vivo de Mika Live</string>
-    <string name="live_channel_desc">Mantiene la conversación de voz en tiempo real al cambiar de aplicación o bloquear la pantalla</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">En vivo</string>
-    <string name="live_entry_active">En vivo</string>
+    <string name="live_channel_name">Modo de voz de Mika</string>
+    <string name="live_channel_desc">Mantiene el modo de voz activo al cambiar de aplicación o bloquear la pantalla</string>
+    <string name="live_notification_title">Modo de voz de Mika</string>
+    <string name="live_capsule_title">Modo de voz</string>
+    <string name="live_entry_button">Modo voz</string>
+    <string name="live_entry_active">Modo voz</string>
 
     <string name="live_status_connecting">Conectando…</string>
     <string name="live_status_reconnecting">Reconectando…</string>
@@ -16,7 +16,7 @@
 
     <string name="live_action_mute">Silenciar</string>
     <string name="live_action_unmute">Activar micrófono</string>
-    <string name="live_action_hangup">Colgar</string>
+    <string name="live_action_hangup">Finalizar</string>
     <string name="live_action_share_screen">Compartir pantalla actual</string>
 
     <string name="live_you_prefix">Tú: %1$s</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">Voz</string>
     <string name="live_settings_model_label">Modelo de audio en vivo</string>
 
-    <string name="live_error_mic_permission">Se necesita permiso de micrófono para la conversación de voz de Mika Live.</string>
+    <string name="live_error_mic_permission">Se necesita permiso de micrófono para el modo de voz.</string>
     <string name="live_error_no_gemini_key">Configura primero una clave API de Gemini en Ajustes de modelos.</string>
-    <string name="live_error_in_carrier_call">No se puede iniciar Mika Live durante una llamada telefónica.</string>
+    <string name="live_error_in_carrier_call">No se puede iniciar el modo de voz durante una llamada telefónica.</string>
     <string name="live_error_connect_failed">No se pudo conectar con Gemini Live. Comprueba tu clave API y la red.</string>
     <string name="live_error_audio_init">No se pudo iniciar el audio bidireccional. Puede que otra aplicación esté usando el micrófono.</string>
     <string name="live_screen_unavailable">Cambia primero a otra aplicación y comprueba el servicio de accesibilidad y el permiso para compartir pantalla.</string>
-    <string name="live_hint_idle_hangup">Mika Live finalizó automáticamente tras 3 minutos de silencio.</string>
+    <string name="live_hint_idle_hangup">El modo de voz finalizó automáticamente tras 3 minutos de silencio.</string>
 
     <string name="live_stage_idle_title">Pantalla virtual en vivo lista</string>
     <string name="live_stage_idle_body">Pídele a Mika abrir cualquier aplicación o realizar una acción y verás la pantalla en tiempo real a tamaño completo.</string>
     <string name="live_stage_preparing">Iniciando pantalla virtual en vivo…</string>
     <string name="live_stage_snapshot_wake">Pantalla en pausa · Toca para reanudar</string>
 
-    <string name="role_live_voice">Modelo de llamada de voz</string>
+    <string name="role_live_voice">Modelo de modo de voz</string>
     <string name="role_live_voice_what">Conversación de voz en tiempo real</string>
     <string name="role_live_voice_need_gemini">Requiere Google Gemini</string>
 
-    <string name="live_in_call_label">En llamada</string>
+    <string name="live_in_call_label">Modo de voz</string>
     <string name="live_status_listening_ready">Escuchando · Di una instrucción</string>
     <string name="live_status_thinking">Mika está pensando…</string>
     <string name="live_status_needs_attention">Esperando tu confirmación en pantalla</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">Esperando la pantalla</string>
     <string name="live_step_acting">Operando la pantalla</string>
 
-    <string name="live_voice_setup_lead">Las llamadas en tiempo real funcionan con modelos de audio nativo de Google Gemini Live. Configura una clave API de Gemini, el modelo y la voz para empezar.</string>
+    <string name="live_voice_setup_lead">El modo de voz funciona con modelos de audio nativo de Google Gemini Live. Configura una clave API de Gemini, el modelo y la voz para empezar.</string>
     <string name="live_voice_connect_title">Conectar Google Gemini</string>
     <string name="live_voice_connect_save">Conectar y activar</string>
     <string name="live_voice_enable_save">Guardar y activar</string>
-    <string name="live_voice_disable">Desactivar modelo de llamada de voz</string>
+    <string name="live_voice_disable">Desactivar modelo de modo de voz</string>
     <string name="live_subtitle_idle_hint">Habla en cualquier momento, puedes interrumpir</string>
 </resources>

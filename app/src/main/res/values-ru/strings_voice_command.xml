@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">Слушать голосовую команду при открытии</string>
+    <string name="voice_command_setting_sub">При открытии слушает до 5 секунд, если микрофон свободен. Использует выбранный ASR или системное распознавание; может использовать сеть.</string>
+    <string name="voice_command_need_live">Сначала настройте модель голосового режима. Прослушивание команд выключено, пока голосовой режим не настроен.</string>
+    <string name="voice_command_need_recognition">Сначала настройте распознавание речи или включите системную службу распознавания.</string>
+    <string name="voice_command_permission">Для голосовых команд требуется доступ к микрофону.</string>
+    <string name="voice_command_listening">Ожидание команды · до 5 секунд</string>
+    <string name="voice_command_recognizing">Проверка команды</string>
+    <string name="voice_command_phrase">Скажите по-китайски «Kai Qi Yu Yin Mo Shi», чтобы войти в голосовой режим.</string>
+    <string name="voice_command_cancel">Отмена</string>
+    <string name="voice_command_no_speech">Речь не распознана</string>
+    <string name="voice_command_not_matched">Команда голосового режима не совпала</string>
+    <string name="voice_command_timeout">Время распознавания истекло. Проверьте настройки речи в текст.</string>
+    <string name="voice_command_busy">Микрофон занят. Команда отменена.</string>
+    <string name="voice_command_unavailable">Не удалось запустить голосовой режим. Проверьте настройки модели и микрофона.</string>
+</resources>

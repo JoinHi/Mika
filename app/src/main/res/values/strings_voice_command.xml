@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">Listen for voice mode command</string>
+    <string name="voice_command_setting_sub">When opened, listen for up to 5 seconds if the microphone is idle. Uses your selected ASR or system recognition; recognition may use the network.</string>
+    <string name="voice_command_need_live">Configure a voice mode model first. Command listening stays off until voice mode is configured.</string>
+    <string name="voice_command_need_recognition">Configure speech to text or enable a system speech recognition service first.</string>
+    <string name="voice_command_permission">Microphone permission is needed for voice commands.</string>
+    <string name="voice_command_listening">Listening for a command · up to 5 seconds</string>
+    <string name="voice_command_recognizing">Checking the command</string>
+    <string name="voice_command_phrase">Say “Kai Qi Yu Yin Mo Shi” in Chinese to enter voice mode.</string>
+    <string name="voice_command_cancel">Cancel</string>
+    <string name="voice_command_no_speech">No speech recognized</string>
+    <string name="voice_command_not_matched">Voice mode command did not match</string>
+    <string name="voice_command_timeout">Transcription timed out. Check speech to text settings.</string>
+    <string name="voice_command_busy">Microphone in use. Command canceled.</string>
+    <string name="voice_command_unavailable">Unable to start voice mode. Check model and microphone settings.</string>
+</resources>

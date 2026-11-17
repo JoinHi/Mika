@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Voz ao vivo do Mika Live</string>
-    <string name="live_channel_desc">Mantém a conversa de voz em tempo real ativa ao alternar de app ou bloquear a tela</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">Ao vivo</string>
-    <string name="live_entry_active">Ao vivo</string>
+    <string name="live_channel_name">Modo de voz da Mika</string>
+    <string name="live_channel_desc">Mantém o modo de voz ativo ao alternar de app ou bloquear a tela</string>
+    <string name="live_notification_title">Modo de voz da Mika</string>
+    <string name="live_capsule_title">Modo de voz</string>
+    <string name="live_entry_button">Modo voz</string>
+    <string name="live_entry_active">Modo voz</string>
 
     <string name="live_status_connecting">Conectando…</string>
     <string name="live_status_reconnecting">Reconectando…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">Voz</string>
     <string name="live_settings_model_label">Modelo de áudio ao vivo</string>
 
-    <string name="live_error_mic_permission">A permissão do microfone é necessária para a conversa de voz do Mika Live.</string>
+    <string name="live_error_mic_permission">A permissão do microfone é necessária para o modo de voz.</string>
     <string name="live_error_no_gemini_key">Configure primeiro uma chave de API do Gemini nas Configurações de modelos.</string>
-    <string name="live_error_in_carrier_call">Não é possível iniciar o Mika Live durante uma chamada telefônica.</string>
+    <string name="live_error_in_carrier_call">Não é possível iniciar o modo de voz durante uma chamada telefônica.</string>
     <string name="live_error_connect_failed">Não foi possível conectar ao Gemini Live. Verifique sua chave de API e a rede.</string>
     <string name="live_error_audio_init">Não foi possível iniciar o áudio bidirecional. Outro aplicativo pode estar usando o microfone.</string>
     <string name="live_screen_unavailable">Alterne primeiro para outro aplicativo e verifique a acessibilidade e a permissão de compartilhamento de tela.</string>
-    <string name="live_hint_idle_hangup">O Mika Live foi encerrado automaticamente após 3 minutos de silêncio.</string>
+    <string name="live_hint_idle_hangup">O modo de voz foi encerrado automaticamente após 3 minutos de silêncio.</string>
 
     <string name="live_stage_idle_title">Tela virtual ao vivo pronta</string>
     <string name="live_stage_idle_body">Peça à Mika para abrir um aplicativo ou executar uma ação e veja a tela em tempo real em tamanho máximo.</string>
     <string name="live_stage_preparing">Iniciando tela virtual ao vivo…</string>
     <string name="live_stage_snapshot_wake">Tela pausada · Toque para retomar</string>
 
-    <string name="role_live_voice">Modelo de chamada de voz</string>
+    <string name="role_live_voice">Modelo do modo de voz</string>
     <string name="role_live_voice_what">Conversa por voz em tempo real</string>
     <string name="role_live_voice_need_gemini">Requer Google Gemini</string>
 
-    <string name="live_in_call_label">Em conversa</string>
+    <string name="live_in_call_label">Modo de voz</string>
     <string name="live_status_listening_ready">Ouvindo · Diga um comando</string>
     <string name="live_status_thinking">Mika está pensando…</string>
     <string name="live_status_needs_attention">Aguardando sua confirmação na tela</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">Aguardando a tela</string>
     <string name="live_step_acting">Operando a tela</string>
 
-    <string name="live_voice_setup_lead">As chamadas de voz em tempo real usam modelos de áudio nativo do Google Gemini Live. Configure uma chave de API do Gemini, o modelo e a voz para começar.</string>
+    <string name="live_voice_setup_lead">O modo de voz usa modelos de áudio nativo do Google Gemini Live. Configure uma chave de API do Gemini, o modelo e a voz para começar.</string>
     <string name="live_voice_connect_title">Conectar Google Gemini</string>
     <string name="live_voice_connect_save">Conectar e ativar</string>
     <string name="live_voice_enable_save">Salvar e ativar</string>
-    <string name="live_voice_disable">Desativar modelo de chamada de voz</string>
+    <string name="live_voice_disable">Desativar modelo do modo de voz</string>
     <string name="live_subtitle_idle_hint">Fale a qualquer momento, interrompa livremente</string>
 </resources>

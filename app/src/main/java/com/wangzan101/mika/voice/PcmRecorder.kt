@@ -42,6 +42,9 @@ class PcmRecorder(
     private var pcm = ShortArray(0)
     private var size = 0
 
+    /** Used by the optional foreground command listener to exclude its own capture. */
+    internal val audioSessionId: Int? get() = synchronized(lock) { record?.audioSessionId }
+
     @SuppressLint("MissingPermission") // 权限由调用方在 start 之前检查
     override fun start(): Boolean {
         synchronized(lock) {

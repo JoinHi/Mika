@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">گوش دادن به فرمان حالت صوتی هنگام باز شدن</string>
+    <string name="voice_command_setting_sub">هنگام باز شدن، اگر میکروفون آزاد باشد تا ۵ ثانیه گوش می‌دهد. از ASR انتخابی یا تشخیص گفتار سیستم استفاده می‌کند و ممکن است از شبکه استفاده کند.</string>
+    <string name="voice_command_need_live">ابتدا مدل حالت صوتی را تنظیم کنید. تا پیش از تنظیم حالت صوتی، گوش دادن به فرمان غیرفعال است.</string>
+    <string name="voice_command_need_recognition">ابتدا تبدیل گفتار به متن را تنظیم کنید یا سرویس تشخیص گفتار سیستم را فعال نمایید.</string>
+    <string name="voice_command_permission">برای فرمان‌های صوتی مجوز میکروفون لازم است.</string>
+    <string name="voice_command_listening">در حال گوش دادن به فرمان · حداکثر ۵ ثانیه</string>
+    <string name="voice_command_recognizing">در حال بررسی فرمان</string>
+    <string name="voice_command_phrase">برای ورود به حالت صوتی، به چینی بگویید «Kai Qi Yu Yin Mo Shi».</string>
+    <string name="voice_command_cancel">لغو</string>
+    <string name="voice_command_no_speech">گفتاری تشخیص داده نشد</string>
+    <string name="voice_command_not_matched">فرمان حالت صوتی مطابقت نداشت</string>
+    <string name="voice_command_timeout">مهلت تبدیل به پایان رسید. تنظیمات گفتار به متن را بررسی کنید.</string>
+    <string name="voice_command_busy">میکروفون در حال استفاده است. فرمان لغو شد.</string>
+    <string name="voice_command_unavailable">امکان شروع حالت صوتی نیست. تنظیمات مدل و میکروفون را بررسی کنید.</string>
+</resources>

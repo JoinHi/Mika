@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Suara Mika Live</string>
-    <string name="live_channel_desc">Menjaga obrolan suara dua arah tetap aktif saat berpindah aplikasi dan layar terkunci</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">Live</string>
-    <string name="live_entry_active">Live</string>
+    <string name="live_channel_name">Mode Suara Mika</string>
+    <string name="live_channel_desc">Menjaga mode suara tetap aktif saat berpindah aplikasi dan layar terkunci</string>
+    <string name="live_notification_title">Mode Suara Mika</string>
+    <string name="live_capsule_title">Mode suara</string>
+    <string name="live_entry_button">Mode suara</string>
+    <string name="live_entry_active">Mode suara</string>
 
     <string name="live_status_connecting">Menghubungkan…</string>
     <string name="live_status_reconnecting">Menyambung ulang…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">Suara</string>
     <string name="live_settings_model_label">Model audio live</string>
 
-    <string name="live_error_mic_permission">Izin mikrofon diperlukan untuk obrolan suara Mika Live.</string>
+    <string name="live_error_mic_permission">Izin mikrofon diperlukan untuk mode suara.</string>
     <string name="live_error_no_gemini_key">Silakan atur kunci API Gemini di Setelan Model terlebih dahulu.</string>
-    <string name="live_error_in_carrier_call">Tidak dapat memulai Mika Live saat panggilan telepon sedang berlangsung.</string>
+    <string name="live_error_in_carrier_call">Tidak dapat memulai mode suara saat panggilan telepon sedang berlangsung.</string>
     <string name="live_error_connect_failed">Gagal terhubung ke Gemini Live. Periksa kunci API dan jaringan Anda.</string>
     <string name="live_error_audio_init">Gagal memulai audio dua arah. Aplikasi lain mungkin sedang menggunakan mikrofon.</string>
     <string name="live_screen_unavailable">Beralihlah ke aplikasi lain terlebih dahulu dan periksa layanan Aksesibilitas serta izin berbagi layar.</string>
-    <string name="live_hint_idle_hangup">Mika Live berakhir otomatis setelah 3 menit hening.</string>
+    <string name="live_hint_idle_hangup">Mode suara berakhir otomatis setelah 3 menit hening.</string>
 
     <string name="live_stage_idle_title">Layar virtual live siap</string>
     <string name="live_stage_idle_body">Ucapkan aplikasi atau tindakan kepada Mika dan layar virtual waktu nyata akan tampil penuh di sini.</string>
     <string name="live_stage_preparing">Memulai layar virtual live…</string>
     <string name="live_stage_snapshot_wake">Layar dijeda · Ketuk untuk melanjutkan</string>
 
-    <string name="role_live_voice">Model panggilan suara</string>
+    <string name="role_live_voice">Model mode suara</string>
     <string name="role_live_voice_what">Percakapan suara waktu nyata</string>
     <string name="role_live_voice_need_gemini">Memerlukan Google Gemini</string>
 
-    <string name="live_in_call_label">Dalam panggilan</string>
+    <string name="live_in_call_label">Mode suara</string>
     <string name="live_status_listening_ready">Mendengarkan · Ucapkan perintah</string>
     <string name="live_status_thinking">Mika sedang berpikir…</string>
     <string name="live_status_needs_attention">Menunggu konfirmasi Anda di layar</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">Menunggu respons layar</string>
     <string name="live_step_acting">Mengoperasikan layar</string>
 
-    <string name="live_voice_setup_lead">Panggilan suara waktu nyata ditenagai model audio asli Google Gemini Live. Atur kunci API Gemini, model audio live, dan suara untuk mulai berbicara.</string>
+    <string name="live_voice_setup_lead">Mode suara ditenagai model audio asli Google Gemini Live. Atur kunci API Gemini, model audio live, dan suara untuk mulai berbicara.</string>
     <string name="live_voice_connect_title">Hubungkan Google Gemini</string>
     <string name="live_voice_connect_save">Hubungkan dan aktifkan</string>
     <string name="live_voice_enable_save">Simpan dan aktifkan</string>
-    <string name="live_voice_disable">Nonaktifkan model panggilan suara</string>
+    <string name="live_voice_disable">Nonaktifkan model mode suara</string>
     <string name="live_subtitle_idle_hint">Bicara kapan saja, bebas menyela</string>
 </resources>

@@ -247,7 +247,7 @@ data class ModelSetupUi(
     val systemSpeech: SystemCapability = SystemCapability(available = false, onDevice = false),
     /** 正在拿一小段录音试转的服务商 id;没有时为 null。 */
     val speechTesting: String? = null,
-    /** 实时语音通话模型与音色配置(供「语音通话模型」用途卡展示)。 */
+    /** 语音模式模型与音色配置(供「语音模式模型」用途卡展示)。 */
     val liveVoice: PersonalLiveConfig = PersonalLiveConfig(),
 ) {
     /** 还没有服务商时表单总是展开。 */
@@ -329,7 +329,7 @@ class ModelSetupViewModel(
     private val systemSpeech: () -> SystemCapability = { SystemCapability(available = false, onDevice = false) },
     /** 选语音模型时试转用的转写器,和按住说话用的是同一种建法(带客户端标识头)。 */
     private val transcriber: (Provider) -> Transcriber = { p -> Transcriber(ProviderStore.modelHttp, store.clientHeaders(p)) },
-    /** 语音通话模型的配置状态;测试和上手流程不传。 */
+    /** 语音模式模型的配置状态;测试和上手流程不传。 */
     private val liveSettings: PersonalLiveSettings? = null,
 ) {
     private val _state = MutableStateFlow(snapshot(ModelSetupUi(AddForm.of(ProviderPresets.all.first()))))

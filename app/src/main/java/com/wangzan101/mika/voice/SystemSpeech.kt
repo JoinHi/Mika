@@ -87,6 +87,9 @@ object SystemSpeech {
      */
     fun afterReleaseWait(answered: Boolean): Outcome = afterSilence(answered)
 
+    /** Hold-to-talk keeps collecting segments; a foreground command finishes after one result. */
+    internal fun continueAfterResult(holding: Boolean, singleUtterance: Boolean): Boolean = holding && !singleUtterance
+
     /**
      * 手机上登记的识别服务(声明了 RecognitionService 的组件)。[RecognizerService.open] 是它对别的 App 开放(exported);
      * [RecognizerService.permission] 是绑定它要的权限。给诊断信息和 [attempts] 用。
@@ -199,6 +202,8 @@ class SystemSpeechSession(
      * 用的是不是本机识别;确定是它缺权限才返回它(见 [SpeechServiceMic.missing]),别的情况为 null。
      */
     private val serviceWithoutMic: (String?, Boolean) -> SpeechServiceTarget? = { _, _ -> null },
+    /** Commands end after one utterance; normal hold-to-talk retains its existing restarts. */
+    private val singleUtterance: Boolean = false,
 ) : SpeechSession {
     private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -410,7 +415,7 @@ class SystemSpeechSession(
         // 仅有错误回调不能证明服务可用,不能据此把组件记成下次优先使用的服务。
         heard(remember = SystemSpeech.failureOf(error) == null)
         when (outcome) {
-            SystemSpeech.Outcome.Retry -> emptySegment()
+            SystemSpeech.Outcome.Retry -> if (singleUtterance) finish(SpeechEvent.Final(segments.full())) else emptySegment()
             SystemSpeech.Outcome.Finish -> finish(SpeechEvent.Final(segments.full()))
             is SystemSpeech.Outcome.Fail -> finish(SpeechEvent.Failed(explained(outcome.why)))
             SystemSpeech.Outcome.NextService -> Unit
@@ -578,7 +583,7 @@ class SystemSpeechSession(
             heard()
             val text = firstText(results)
             segments.segmentDone(text)
-            if (holding) {
+            if (SystemSpeech.continueAfterResult(holding, singleUtterance)) {
                 // 识别服务觉得一句说完了,但手还按着:接着听下一段
                 if (text.isBlank()) {
                     emptySegment()

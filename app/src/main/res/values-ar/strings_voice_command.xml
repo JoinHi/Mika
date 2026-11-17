@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">الاستماع لأمر الوضع الصوتي عند الفتح</string>
+    <string name="voice_command_setting_sub">عند الفتح، يستمع لمدة تصل إلى 5 ثوانٍ إذا كان الميكروفون متاحًا. يستخدم نموذج التعرف المحدد أو خدمة النظام؛ قد يستخدم الشبكة.</string>
+    <string name="voice_command_need_live">يرجى إعداد نموذج الوضع الصوتي أولاً. يظل الاستماع للأمر متوقفًا حتى إعداد الوضع الصوتي.</string>
+    <string name="voice_command_need_recognition">يرجى إعداد تحويل الكلام إلى نص أو تفعيل خدمة التعرف على الكلام في النظام أولاً.</string>
+    <string name="voice_command_permission">إذن الميكروفون مطلوب للأوامر الصوتية.</string>
+    <string name="voice_command_listening">جارٍ الاستماع للأمر · حتى 5 ثوانٍ</string>
+    <string name="voice_command_recognizing">جارٍ التحقق من الأمر</string>
+    <string name="voice_command_phrase">قل بالصينية «Kai Qi Yu Yin Mo Shi» للدخول إلى الوضع الصوتي.</string>
+    <string name="voice_command_cancel">إلغاء</string>
+    <string name="voice_command_no_speech">لم يتم التعرف على كلام</string>
+    <string name="voice_command_not_matched">لم يتطابق أمر الوضع الصوتي</string>
+    <string name="voice_command_timeout">انتهت مهلة التحويل. تحقق من إعدادات تحويل الكلام إلى نص.</string>
+    <string name="voice_command_busy">الميكروفون قيد الاستخدام. أُلغي الأمر.</string>
+    <string name="voice_command_unavailable">تعذر بدء الوضع الصوتي. تحقق من إعدادات النموذج والميكروفون.</string>
+</resources>

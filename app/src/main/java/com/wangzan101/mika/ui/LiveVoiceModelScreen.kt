@@ -62,10 +62,10 @@ import kotlinx.coroutines.withContext
 private const val DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 
 /**
- * 设置 › 模型 › 语音通话模型:
+ * 设置 › 模型 › 语音模式模型:
  * - 未配置 Gemini 服务商时可直接内联填写 Base URL 与 API Key 一键连接并启用，无需二次跳转；
- * - 统一管理 Gemini 服务商切换、通话音色（Aoede / Kore / Puck 等）与 `bidiGenerateContent` 实时音频模型；
- * - 通话进行中修改音色或模型会自动无缝重连生效。
+ * - 统一管理 Gemini 服务商切换、语音音色（Aoede / Kore / Puck 等）与 `bidiGenerateContent` 实时音频模型；
+ * - 语音模式进行中修改音色或模型会自动无缝重连生效。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

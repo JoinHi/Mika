@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">起動時に音声コマンドを待ち受ける</string>
+    <string name="voice_command_setting_sub">マイクが空いているとき最大5秒間聞き取ります。選択済みのASRまたはシステム音声認識を使用し、通信が発生する場合があります。</string>
+    <string name="voice_command_need_live">先に音声モードモデルを設定してください。音声モード未設定の間はコマンドを待ち受けません。</string>
+    <string name="voice_command_need_recognition">先に音声文字起こしを設定するか、端末の音声認識サービスを有効にしてください。</string>
+    <string name="voice_command_permission">音声コマンドにはマイク権限が必要です。</string>
+    <string name="voice_command_listening">コマンドを聞き取り中 · 最大5秒</string>
+    <string name="voice_command_recognizing">コマンドを確認中</string>
+    <string name="voice_command_phrase">中国語で「Kai Qi Yu Yin Mo Shi」と言うと音声モードを開始します。</string>
+    <string name="voice_command_cancel">キャンセル</string>
+    <string name="voice_command_no_speech">音声を認識できませんでした</string>
+    <string name="voice_command_not_matched">音声モード開始のコマンドと一致しませんでした</string>
+    <string name="voice_command_timeout">文字起こしがタイムアウトしました。音声文字起こし設定を確認してください。</string>
+    <string name="voice_command_busy">マイクが使用中のためコマンドをキャンセルしました。</string>
+    <string name="voice_command_unavailable">音声モードを開始できません。モデルとマイクの設定を確認してください。</string>
+</resources>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_command_setting">Ouvir comando de modo de voz ao abrir</string>
+    <string name="voice_command_setting_sub">Ao abrir, ouve por até 5 segundos se o microfone estiver livre. Usa o ASR selecionado ou o reconhecimento do sistema; pode usar a rede.</string>
+    <string name="voice_command_need_live">Configure primeiro um modelo do modo de voz. A escuta fica desativada até que o modo de voz seja configurado.</string>
+    <string name="voice_command_need_recognition">Configure primeiro voz para texto ou ative um serviço de reconhecimento de voz do sistema.</string>
+    <string name="voice_command_permission">A permissão do microfone é necessária para comandos de voz.</string>
+    <string name="voice_command_listening">Ouvindo comando · até 5 segundos</string>
+    <string name="voice_command_recognizing">Verificando comando</string>
+    <string name="voice_command_phrase">Diga em chinês “Kai Qi Yu Yin Mo Shi” para entrar no modo de voz.</string>
+    <string name="voice_command_cancel">Cancelar</string>
+    <string name="voice_command_no_speech">Nenhuma fala reconhecida</string>
+    <string name="voice_command_not_matched">O comando do modo de voz não correspondeu</string>
+    <string name="voice_command_timeout">Tempo de transcrição esgotado. Verifique as configurações de voz para texto.</string>
+    <string name="voice_command_busy">Microfone em uso. Comando cancelado.</string>
+    <string name="voice_command_unavailable">Não foi possível iniciar o modo de voz. Verifique as configurações do modelo e do microfone.</string>
+</resources>

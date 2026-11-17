@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Mika 即時語音</string>
-    <string name="live_channel_desc">切到其他應用程式或鎖定螢幕期間保持 Mika Live 即時語音不斷線</string>
-    <string name="live_notification_title">Mika Live 即時語音</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">即時通話</string>
-    <string name="live_entry_active">通話中</string>
+    <string name="live_channel_name">Mika 語音模式</string>
+    <string name="live_channel_desc">切到其他應用程式或鎖定螢幕期間保持語音模式不斷線</string>
+    <string name="live_notification_title">Mika 語音模式</string>
+    <string name="live_capsule_title">語音模式</string>
+    <string name="live_entry_button">語音模式</string>
+    <string name="live_entry_active">語音模式中</string>
 
     <string name="live_status_connecting">正在連線…</string>
     <string name="live_status_reconnecting">正在重新連線…</string>
@@ -16,34 +16,34 @@
 
     <string name="live_action_mute">靜音</string>
     <string name="live_action_unmute">取消靜音</string>
-    <string name="live_action_hangup">掛斷</string>
+    <string name="live_action_hangup">結束</string>
     <string name="live_action_share_screen">傳送目前畫面</string>
 
     <string name="live_you_prefix">你：%1$s</string>
     <string name="live_mika_prefix">Mika：%1$s</string>
 
     <string name="live_settings_provider_label">Gemini 服務商</string>
-    <string name="live_settings_voice_label">通話音色</string>
+    <string name="live_settings_voice_label">語音音色</string>
     <string name="live_settings_model_label">即時音訊模型</string>
 
-    <string name="live_error_mic_permission">Mika Live 需要麥克風權限才能進行即時語音對話。</string>
+    <string name="live_error_mic_permission">語音模式需要麥克風權限才能進行即時語音對話。</string>
     <string name="live_error_no_gemini_key">請先在「模型」設定中新增可用的 Gemini API Key。</string>
-    <string name="live_error_in_carrier_call">目前正在進行電話通話，暫時無法開啟 Mika Live。</string>
+    <string name="live_error_in_carrier_call">目前正在進行電話通話，暫時無法開啟語音模式。</string>
     <string name="live_error_connect_failed">連線 Gemini Live 失敗，請檢查 API Key、模型名稱或網路代理設定。</string>
     <string name="live_error_audio_init">無法啟動全雙工音訊，麥克風可能正被其他應用程式佔用。</string>
     <string name="live_screen_unavailable">請先切到要查看的應用程式，並確認已開啟無障礙服務與畫面共享權限。</string>
-    <string name="live_hint_idle_hangup">靜默滿 3 分鐘且無背景任務，Mika Live 已自動掛斷。</string>
+    <string name="live_hint_idle_hangup">靜默滿 3 分鐘且無背景任務，已自動退出語音模式。</string>
 
     <string name="live_stage_idle_title">即時虛擬螢幕待命中</string>
     <string name="live_stage_idle_body">直接對 Mika 說出要開啟的應用程式或操作，即時畫面將在此全幅放大呈現</string>
     <string name="live_stage_preparing">正在啟動即時虛擬螢幕…</string>
     <string name="live_stage_snapshot_wake">畫面已休眠 · 輕觸恢復操控</string>
 
-    <string name="role_live_voice">語音通話模型</string>
+    <string name="role_live_voice">語音模式模型</string>
     <string name="role_live_voice_what">即時語音對話</string>
     <string name="role_live_voice_need_gemini">需要 Google Gemini</string>
 
-    <string name="live_in_call_label">對話中</string>
+    <string name="live_in_call_label">語音模式</string>
     <string name="live_status_listening_ready">正在聆聽 · 請下指令</string>
     <string name="live_status_thinking">Mika 思考中…</string>
     <string name="live_status_needs_attention">等待你在螢幕上確認</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">正在等待頁面回應</string>
     <string name="live_step_acting">正在操作螢幕</string>
 
-    <string name="live_voice_setup_lead">即時全雙工語音對話由 Google Gemini Live 原生音訊模型驅動。設定好 Gemini API Key、即時音訊模型與通話音色即可開啟對話。</string>
+    <string name="live_voice_setup_lead">語音模式由 Google Gemini Live 原生音訊模型驅動。設定好 Gemini API Key、即時音訊模型與語音音色即可開啟對話。</string>
     <string name="live_voice_connect_title">連線 Google Gemini</string>
     <string name="live_voice_connect_save">連線並啟用</string>
     <string name="live_voice_enable_save">儲存並啟用</string>
-    <string name="live_voice_disable">停用語音通話模型</string>
+    <string name="live_voice_disable">停用語音模式模型</string>
     <string name="live_subtitle_idle_hint">直接開口說話，隨時可打斷</string>
 </resources>

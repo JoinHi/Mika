@@ -1,10 +1,10 @@
 <resources>
-    <string name="live_channel_name">Mika Live Voice</string>
-    <string name="live_channel_desc">Keeps real-time full-duplex voice chat active across apps and screen lock</string>
-    <string name="live_notification_title">Mika Live</string>
-    <string name="live_capsule_title">Mika Live</string>
-    <string name="live_entry_button">Live</string>
-    <string name="live_entry_active">Live</string>
+    <string name="live_channel_name">Mika Voice Mode</string>
+    <string name="live_channel_desc">Keeps voice mode active across apps and screen lock</string>
+    <string name="live_notification_title">Mika Voice Mode</string>
+    <string name="live_capsule_title">Voice mode</string>
+    <string name="live_entry_button">Voice mode</string>
+    <string name="live_entry_active">Voice mode</string>
 
     <string name="live_status_connecting">Connecting…</string>
     <string name="live_status_reconnecting">Reconnecting…</string>
@@ -26,24 +26,24 @@
     <string name="live_settings_voice_label">Voice</string>
     <string name="live_settings_model_label">Live audio model</string>
 
-    <string name="live_error_mic_permission">Microphone permission is required for Mika Live voice chat.</string>
+    <string name="live_error_mic_permission">Microphone permission is required for voice mode.</string>
     <string name="live_error_no_gemini_key">Please configure a Gemini API key in Model Settings first.</string>
-    <string name="live_error_in_carrier_call">Cannot start Mika Live while a phone call is in progress.</string>
+    <string name="live_error_in_carrier_call">Cannot start voice mode while a phone call is in progress.</string>
     <string name="live_error_connect_failed">Could not connect to Gemini Live. Please check your API key and network.</string>
     <string name="live_error_audio_init">Could not initialize full-duplex audio. Another app may be using the microphone.</string>
     <string name="live_screen_unavailable">Switch to another app first or check Accessibility screen access to share your screen.</string>
-    <string name="live_hint_idle_hangup">Mika Live ended automatically after 3 minutes of silence.</string>
+    <string name="live_hint_idle_hangup">Voice mode ended automatically after 3 minutes of silence.</string>
 
     <string name="live_stage_idle_title">Live virtual screen ready</string>
     <string name="live_stage_idle_body">Speak any app or action to Mika and the live virtual screen will fill this stage in real time.</string>
     <string name="live_stage_preparing">Starting live virtual screen…</string>
     <string name="live_stage_snapshot_wake">Screen paused · Tap to resume</string>
 
-    <string name="role_live_voice">Voice call model</string>
-    <string name="role_live_voice_what">Real-time voice call</string>
+    <string name="role_live_voice">Voice mode model</string>
+    <string name="role_live_voice_what">Real-time voice chat</string>
     <string name="role_live_voice_need_gemini">Requires Google Gemini</string>
 
-    <string name="live_in_call_label">In call</string>
+    <string name="live_in_call_label">Voice mode</string>
     <string name="live_status_listening_ready">Listening · Speak a command</string>
     <string name="live_status_thinking">Mika is thinking…</string>
     <string name="live_status_needs_attention">Waiting for your confirmation</string>
@@ -58,10 +58,10 @@
     <string name="live_step_waiting">Waiting for screen</string>
     <string name="live_step_acting">Operating screen</string>
 
-    <string name="live_voice_setup_lead">Real-time voice calls are powered by Google Gemini Live native audio models. Configure a Gemini API key, live audio model, and voice to start talking.</string>
+    <string name="live_voice_setup_lead">Voice mode is powered by Google Gemini Live native audio models. Configure a Gemini API key, live audio model, and voice to start talking.</string>
     <string name="live_voice_connect_title">Connect Google Gemini</string>
     <string name="live_voice_connect_save">Connect and enable</string>
     <string name="live_voice_enable_save">Save and enable</string>
-    <string name="live_voice_disable">Disable voice call model</string>
+    <string name="live_voice_disable">Disable voice mode model</string>
     <string name="live_subtitle_idle_hint">Speak anytime, interrupt freely</string>
 </resources>

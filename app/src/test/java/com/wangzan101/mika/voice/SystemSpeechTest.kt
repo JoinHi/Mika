@@ -7,6 +7,14 @@ import org.junit.Test
 
 class SystemSpeechTest {
     @Test
+    fun aCommandFinalResultNeverReopensTheMicrophoneButHoldingStillDoes() {
+        assertEquals(false, SystemSpeech.continueAfterResult(holding = true, singleUtterance = true))
+        assertEquals(false, SystemSpeech.continueAfterResult(holding = false, singleUtterance = true))
+        assertEquals(true, SystemSpeech.continueAfterResult(holding = true, singleUtterance = false))
+        assertEquals(false, SystemSpeech.continueAfterResult(holding = false, singleUtterance = false))
+    }
+
+    @Test
     fun errorCodesMapToFailures() {
         assertNull(SystemSpeech.failureOf(SpeechRecognizer.ERROR_NO_MATCH))
         assertNull(SystemSpeech.failureOf(SpeechRecognizer.ERROR_SPEECH_TIMEOUT))

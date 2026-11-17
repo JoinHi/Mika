@@ -32,6 +32,7 @@ import com.wangzan101.mika.core.action.Origin
 import com.wangzan101.mika.core.action.OutwardPacing
 import com.wangzan101.mika.core.assembly.legacyNames
 import com.wangzan101.mika.core.assembly.toolDispatcher
+import com.wangzan101.mika.core.cap.phone.AppPacePlan
 import com.wangzan101.mika.core.cap.phone.AppPacing
 import com.wangzan101.mika.core.cap.phone.OperatingPace
 import com.wangzan101.mika.core.cap.phone.sms.SmsPrivateScreen
@@ -69,7 +70,6 @@ import com.wangzan101.mika.core.tool.PACKAGE_NAME_RE
 import com.wangzan101.mika.core.tool.ToolDispatcher
 import com.wangzan101.mika.core.uistate.AfterTaskMarks
 import com.wangzan101.mika.core.uistate.AppAccessScreenPort
-import com.wangzan101.mika.core.uistate.PlacePace
 import com.wangzan101.mika.core.vision.VisionService
 import com.wangzan101.mika.memory.MemoryRuntime
 import com.wangzan101.mika.replay.FileRouteStore
@@ -2115,6 +2115,11 @@ class LiveDirectPhoneController internal constructor(
                 }.getOrDefault(-1) >= 0
             }
 
+            fun pacePlan(): AppPacePlan {
+                val flags = FeatureFlags.get(app)
+                return AppPacePlan(flags.operatingPace(), flags.appPaceOverrides())
+            }
+
             val screen = AndroidScreen(
                 a11y = a11y,
                 shell = shell,
@@ -2129,9 +2134,9 @@ class LiveDirectPhoneController internal constructor(
                     app.resources.awaitApp(claimKey(pkg, user), runKey, timeoutMs, taskActive, free)
                 },
                 clipSaved = { original, ours -> recovery.saveClip(original, ours) },
-                typing = { _ ->
-                    val p = if (waitProfileProvider().instantTyping) OperatingPace.FAST else FeatureFlags.get(app).operatingPace()
-                    p.typing(PlacePace.NORMAL)
+                typing = { pkg ->
+                    val p = if (waitProfileProvider().instantTyping) OperatingPace.FAST else pacePlan().of(pkg)
+                    p.typing()
                 },
                 beforeOpen = muter::beforeOpen,
                 notOpened = muter::notOpened,
@@ -2247,9 +2252,10 @@ class LiveDirectPhoneController internal constructor(
                 deepLinks = speedFlags.deepLinks,
                 appPacing = {
                     if (waitProfileProvider().turbo) AppPacing.Off
-                    else FeatureFlags.get(app).operatingPace().appPacing()
+                    else pacePlan().appPacing()
                 },
-                appPace = { pkg -> PlacePace.of(sessionCatalog.appPace(pkg)) },
+                appTempo = { pkg -> pacePlan().of(pkg).tempo },
+                appCapped = { pkg -> pacePlan().capped(pkg) },
                 appIdleScroll = { null },
                 imageOps = BitmapImageOps,
                 runSpec = spec,

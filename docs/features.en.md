@@ -4,6 +4,12 @@
 
 Tell Mika what you want in one sentence, and it gets it done on your phone. This page has the details behind each item under "What it can do" in the [README](../README.md).
 
+## Saved tasks
+
+- Long-press one of your text messages and choose “Save as task”, then edit its title and instructions. You can also add, edit, or delete tasks using the star beside the composer or “Saved tasks” in Settings.
+- Choosing a task on a new chat or through the star fills the current composer for editing before sending. Existing text requires confirmation before replacement.
+- Tasks are stored locally, preserving the previous recommended-task list. Saving and selecting tasks do not call a model or execute a task.
+
 ## Operates any app without taking over your screen
 
 Any app installed on your phone works, with no per-app integration: Mika looks at the screen, finds buttons, taps and types like a person would. If it can see it, it can operate it.
@@ -138,4 +144,4 @@ The FAQ now has its own page: [FAQ](faq.en.md). For phone control, see [Troubles
 
 Enable call summaries, tasks and message drafts in AI calling settings. After an AI call, the selected main model summarizes the available transcript and drafts a short WeChat follow-up in the same request. Calls without a transcript do not trigger generation; small talk, a refusal to be contacted or no useful follow-up may produce no draft.
 
-Open the call record to review, edit, save and copy the draft. It stays encrypted with the call history. This does not find contacts, open WeChat or send messages. Failed summaries can be retried from the call record; legacy records are not regenerated automatically. Review facts and commitments before using a draft.
+Open the call record to review, edit, save and copy the draft. It stays encrypted with the call history. This does not find contacts, open WeChat or send messages. Failed summaries can be retried from the call record; existing summaries without a draft offer “Write follow-up message” to compose one locally, without another model request. Review facts and commitments before using a draft.
